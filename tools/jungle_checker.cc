@@ -340,6 +340,151 @@ static int table_info(const std::vector<std::string>& args) {
     return 0;
 }
 
+static int dump_kv(const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        std::cout
+            << "too few arguments:" << std::endl
+            << "    " << exec_filename
+            << " " << args[0] << " <DB path> <key> [<options>]"
+            << std::endl
+            << "  Options:" << std::endl
+            << "   -h, --hex        treat given key as a hex value."
+            << std::endl
+            << "                    If not set, key will be treated as a plain text."
+            << std::endl
+            << "   -p, --prefix     instead of exact match, find all keys matching "
+            << std::endl
+            << "                    the given prefix."
+            << std::endl;
+        return -1;
+    }
+
+    Status s;
+    const std::string& db_path = args[1];
+    const std::string& given_key = args[2];
+    bool hex_key = false;
+    bool prefix_match = false;
+    if (args.size() >= 4) {
+        for (size_t ii=3; ii<args.size(); ++ii) {
+            if (args[ii] == "-h" || args[ii] == "--hex") {
+                hex_key = true;
+            }
+            if (args[ii] == "-p" || args[ii] == "--prefix") {
+                prefix_match = true;
+            }
+        }
+    }
+
+    SizedBuf key_buf;
+    SizedBuf::Holder h_key_buf(key_buf);
+    if (hex_key) {
+        // If hex key, check validity of given string.
+        if (given_key.size() || given_key.size() % 2) {
+            std::cout << "incorrect hex value: " << given_key << std::endl;
+            return -1;
+        }
+
+        key_buf.alloc(given_key.size() / 2);
+        for (size_t ii=0; ii<given_key.size(); ++ii) {
+            if ( ( given_key[ii] >= '0' &&
+                   given_key[ii] <= '9' ) ||
+                 ( given_key[ii] >= 'a' &&
+                   given_key[ii] <= 'f' ) ||
+                 ( given_key[ii] >= 'A' &&
+                   given_key[ii] <= 'F' ) ) {
+                if (ii && ii % 2 == 1) {
+                    std::string cur_hex = given_key.substr(ii - 1, 2);
+                    key_buf.data[ii/2 - 1] = std::stoul(cur_hex, nullptr, 16);
+                }
+
+            } else {
+                std::cout << "incorrect hex value: " << given_key << std::endl;
+                return -1;
+            }
+        }
+
+    } else {
+        key_buf.set(given_key);
+    }
+
+    jungle::DB* db = nullptr;
+    bool log_mode = false;
+    int rc = load_db(db_path, db, log_mode);
+    if (rc != 0) return rc;
+
+    // 0       1    2   (3)
+    // kvmeta path foo
+    //   => display meta of record with key `foo` on terminal.
+    //
+    // kvmeta path 00ff -h
+    //   => display meta of record with key {0x0, 0xff} on terminal.
+    //
+    // kvmeta path 00ff -h -p
+    //   => display meta of record with key starting with
+    //      {0x0, 0xff} on terminal.
+
+    if (prefix_match) {
+    } else {
+        Record rec_out;
+        Record::Holder h_rec_out(rec_out);
+        bool meta_only = (args[0] == "kvmeta");
+        s = db->getRecordByKey(key_buf, rec_out, meta_only);
+        if (!s) {
+            printf("  READ FAILED: %d\n", (int)s);
+            return -1;;
+        }
+        printf( "  key: %s\n",
+                HexDump::toString(rec_out.kv.key).c_str() );
+        printf( "  meta: %s\n",
+                HexDump::toString(rec_out.meta).c_str() );
+
+        if (args[0] == "dumpkv") {
+            printf( "  value: %s\n",
+                    HexDump::toString(rec_out.kv.value).c_str() );
+
+        } else if (args[0] == "dumpkv2file") {
+            std::ofstream fs;
+            std::string filename = "log_dump_";
+            fs.open(filename);
+            fs << rec_out.kv.value.toString();
+            fs.close();
+        } else {
+            printf("  value: %u bytes\n", rec_out.kv.value.size);
+        }
+        printf( "\n" );
+    }
+
+#if 0
+    for (uint64_t ii=start_idx; ii<=end_idx; ++ii) {
+        Record rec_out;
+        Record::Holder h(rec_out);
+        s = db->p->logMgr->getSN(ii, rec_out);
+        printf( "  seq: %zu\n", (size_t)ii );
+        if (!s) {
+            printf("  READ FAILED: %d\n", (int)s);
+            continue;
+        }
+        printf( "  key: %s\n",
+                HexDump::toString(rec_out.kv.key).c_str() );
+        printf( "  meta: %s\n",
+                HexDump::toString(rec_out.meta).c_str() );
+        if (args[0] == "dumplog") {
+            printf( "  value: %s\n",
+                    HexDump::toString(rec_out.kv.value).c_str() );
+
+        } else if (args[0] == "dumplog2file") {
+            std::ofstream fs;
+            std::string filename = "log_dump_" + std::to_string(ii);
+            fs.open(filename);
+            fs << rec_out.kv.value.toString();
+            fs.close();
+        }
+        printf( "\n" );
+    }
+#endif
+    return 0;
+}
+
 };
 
 void usage(int argc, char** argv) {
@@ -351,14 +496,29 @@ void usage(int argc, char** argv) {
     ss << "Commands:" << std::endl;
     ss << "    overview         "
        << "Print log and table file info." << std::endl;
+
     ss << "    logmeta          "
-       << "Print key, seq number, and meta of logs in given range." << std::endl;
+       << "Print key, seq number, and meta of logs "
+          "in the given range of sequence number." << std::endl;
+
     ss << "    dumplog          "
        << "In addition to logmeta, print value as well." << std::endl;
+
     ss << "    dumplog2file     "
        << "In addition to logmeta, dump value to a file (per log)." << std::endl;
+
     ss << "    tableinfo        "
        << "Print table info in each level." << std::endl;
+
+    ss << "    kvmeta           "
+       << "Print seq number and meta of record(s) "
+          "corresponding to the given key." << std::endl;
+
+    ss << "    dumpkv           "
+       << "In addition to kvmeta, print value as well." << std::endl;
+
+    ss << "    dumpkv2file           "
+       << "In addition to kvmeta, dump value to a file (per record)." << std::endl;
 
     std::cout << ss.str();
 
@@ -381,6 +541,11 @@ int process_cmd(int argc, char** argv) {
 
     } else if ( args[0] == "tableinfo" ) {
         return Checker::table_info(args);
+
+    } else if ( args[0] == "kvmeta" ||
+                args[0] == "dumpkv" ||
+                args[0] == "dumpkv2file" ) {
+        return Checker::dump_kv(args);
 
     } else {
         std::cout << "unknown command: " << args[0] << std::endl;
