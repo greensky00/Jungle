@@ -667,6 +667,16 @@ Status DB::getRecordByKey(const SizedBuf& key,
     return s;
 }
 
+Status getNearestRecordByKey(const SizedBuf& key,
+                             Record& rec_out,
+                             bool greater,
+                             bool meta_only)
+{
+    Status s;
+
+    return s;
+}
+
 Status DB::del(const SizedBuf& key) {
     Status s;
     EP( p->checkHandleValidity(DBInternal::OPTYPE_WRITE) );

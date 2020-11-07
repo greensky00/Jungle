@@ -586,8 +586,47 @@ Status MemTable::getRecordByKey(const uint64_t chk,
         if (!bfByKey->check(key.data, key.size)) return Status::KEY_NOT_FOUND;
     }
 
+    return getRecordByKeyInternal( chk, key, rec_out,
+                                   allow_flushed_log, allow_tombstone, 0 );
+}
+
+Status MemTable::getNearestRecordByKey(const uint64_t chk,
+                                       const SizedBuf& key,
+                                       Record& rec_out,
+                                       bool allow_flushed_log,
+                                       bool allow_tombstone,
+                                       bool greater)
+{
+    // NOTE: We can't use bloom filter
+    //       as we should allow non-exact match.
+    return getRecordByKeyInternal( chk, key, rec_out,
+                                   allow_flushed_log, allow_tombstone,
+                                   greater ? 1 : 2 );
+}
+
+Status MemTable::getRecordByKeyInternal(const uint64_t chk,
+                                        const SizedBuf& key,
+                                        Record& rec_out,
+                                        bool allow_flushed_log,
+                                        bool allow_tombstone,
+                                        int search_option)
+{
+    // NOTE: We can't use bloom filter
+    //       as we should allow non-exact match.
     RecNode query(&key);
-    skiplist_node* cursor = skiplist_find(idxByKey, &query.snode);
+    skiplist_node* cursor = nullptr;
+    switch (search_option) {
+    case 0:
+    default:
+        skiplist_find(idxByKey, &query.snode);
+        break;
+    case 1:
+        skiplist_find_greater_or_equal(idxByKey, &query.snode);
+        break;
+    case 2:
+        skiplist_find_smaller_or_equal(idxByKey, &query.snode);
+        break;
+    }
     if (!cursor) return Status::KEY_NOT_FOUND;
 
     RecNode* node = _get_entry(cursor, RecNode, snode);

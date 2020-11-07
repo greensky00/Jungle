@@ -140,6 +140,12 @@ public:
                const SizedBuf& key,
                Record& rec_out);
 
+    Status getNearest(const uint64_t chk,
+                      std::list<LogFileInfo*>* l_list,
+                      const SizedBuf& key,
+                      Record& rec_out,
+                      bool greater = true);
+
     Status sync(bool call_fsync = true);
 
     Status syncNoWait(bool call_fsync = true);

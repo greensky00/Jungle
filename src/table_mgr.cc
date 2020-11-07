@@ -439,6 +439,94 @@ Status TableMgr::get(DB* snap_handle,
     return Status();
 }
 
+Status TableMgr::getNearest(DB* snap_handle,
+                            Record& rec_inout,
+                            bool greater,
+                            bool meta_only)
+{
+    // NOTE:
+    //  `rec_inout.kv.key` is given by user, shouldn't free in here.
+    const DBConfig* db_config = getDbConfig();
+    if (db_config->logSectionOnly) return Status::KEY_NOT_FOUND;
+
+    Record cur_nearest;
+    CustomCmpFunc custom_cmp = getDbConfig()->cmpFunc;
+    auto cmp_func = [&](const SizedBuf& a, const SizedBuf& b) -> int {
+        if (custom_cmp) {
+            return custom_cmp( a.data, a.size, b.data, b.size,
+                               getDbConfig()->cmpFuncParam );
+        } else {
+            return SizedBuf::cmp(a, b);
+        }
+    };
+
+    auto update_cur_nearest = [&](const Record& rec_out) {
+        bool update_cur_nearest = false;
+        if (cur_nearest.kv.key.empty()) {
+            update_cur_nearest = true;
+        } else {
+            int cmp = 0;
+            if (greater) {
+                cmp = cmp_func(rec_out.kv.key, cur_nearest.kv.key);
+            } else {
+                cmp = cmp_func(cur_nearest.kv.key, rec_out.kv.key);
+            }
+            update_cur_nearest = (cmp < 0);
+            if (cmp == 0) {
+                // In case of exact match, compare the sequence number,
+                // and choose the higher one.
+                update_cur_nearest = (rec_out.seqNum > cur_nearest.seqNum);
+            }
+        }
+        if (update_cur_nearest) {
+            cur_nearest = rec_out;
+        }
+    };
+
+    Status s;
+    Record latest_rec;
+    size_t num_levels = mani->getNumLevels();
+
+    // NOTE:
+    //   Unlike point query, nearest search should check the all level,
+    //   as closer key may exist in lower levels.
+    for (size_t ii=0; ii<num_levels; ++ii) {
+        std::list<TableInfo*> tables;
+        s = mani->getTablesNearest(ii, rec_inout.kv.key, tables);
+        if (!s) continue;
+
+        for (TableInfo* table: tables) {
+            Record new_rec;
+            // WARNING: SHOULD NOT free `key` here
+            //          as it is given by caller.
+            new_rec.kv.key = rec_inout.kv.key;
+            s = table->file->get(snap_handle, new_rec, meta_only);
+            if ( s.ok() &&
+                 ( latest_rec.empty() ||
+                   latest_rec.seqNum < new_rec.seqNum ) ) {
+                // `new_rec` is newer.
+                latest_rec.kv.key.clear();
+                latest_rec.free();
+                new_rec.moveTo(latest_rec);
+            } else {
+                // `latest_rec` is newer.
+                new_rec.kv.key.clear();
+                new_rec.free();
+            }
+            table->done();
+        }
+        if (!latest_rec.empty()) break;
+    }
+    if (latest_rec.empty()) return Status::KEY_NOT_FOUND;
+
+    // Since `key` is given by caller, change the other fields only.
+    latest_rec.kv.value.moveTo(rec_inout.kv.value);
+    latest_rec.meta.moveTo(rec_inout.meta);
+    rec_inout.seqNum = latest_rec.seqNum;
+    rec_inout.type  = latest_rec.type;
+    return Status();
+}
+
 TableInfo* TableMgr::getSmallestSrcTable(const std::list<TableInfo*>& tables,
                                          uint32_t target_hash_num)
 {
