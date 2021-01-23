@@ -510,6 +510,39 @@ public:
      * instead of iteration.
      */
     bool fastIndexScan;
+
+    /**
+     * [EXPERIMENTAL]
+     * Type definitions for sorting window options.
+     * Sorting window will be used for boosting compaction/split/merge
+     * tasks, by making disk read pattern sequential.
+     */
+    struct SortingWindowOptions {
+        SortingWindowOptions()
+            : enabled(false), numRecords(100000), maxSize(1024 * 1024 * 1024) {}
+
+        /**
+         * If `true`, and below options are all non-zero,
+         * sorting window is enabled.
+         */
+        bool enabled;
+
+        /**
+         * Maximum number of records in a window.
+         */
+        uint64_t numRecords;
+
+        /**
+         * Maximum memory size (in bytes) allowed for a window.
+         */
+        uint64_t maxSize;
+    };
+
+    /**
+     * [EXPERIMENTAL]
+     * Sorting window options.
+     */
+    SortingWindowOptions sortingWindowOpt;
 };
 
 class GlobalConfig {

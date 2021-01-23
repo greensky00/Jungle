@@ -275,13 +275,14 @@ Status TableMgr::compactLevelItr(const CompactOptions& options,
             if (cur_rec.kv.key > max_key_table) {
                 _log_info( myLog, "rec key %s is greater than max table key %s, "
                            "urgent split at level %zu, acc size %zu, "
-                           "acc records %zu, limit %zu",
+                           "acc records %zu, limit %zu, limit num %zu",
                            cur_rec.kv.key.toReadableString().c_str(),
                            max_key_table.toReadableString().c_str(),
                            level + 1,
                            acc_size,
                            acc_records,
-                           TABLE_LIMIT );
+                           TABLE_LIMIT,
+                           TABLE_LIMIT_NUM );
                 cur_group = new RecGroupItr( cur_rec.kv.key,
                                              cur_index,
                                              nullptr);

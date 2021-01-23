@@ -284,6 +284,13 @@ public:
                             uint64_t start_index,
                             uint64_t count);
 
+    void setTableFileOffsetSW( std::list<uint64_t>& checkpoints,
+                               TableFile* src_file,
+                               TableFile* dst_file,
+                               std::vector<uint64_t>& offsets,
+                               uint64_t start_index,
+                               uint64_t count );
+
     void setTableFileItrFlush(TableFile* dst_file,
                               std::list<Record*>& recs_batch,
                               bool without_commit);

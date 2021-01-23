@@ -164,13 +164,27 @@ void TableWriterMgr::doTableWrite(TableWriterArgs* args) {
 
     } else if (args->payload.sourceTableFile) {
         // Offset is given.
-        args->payload.targetTableMgr->setTableFileOffset
-            ( *args->payload.checkpoints,
-              args->payload.sourceTableFile,
-              args->payload.targetTableFile,
-              *args->payload.offsets,
-              args->payload.startIdx,
-              args->payload.count );
+        const DBConfig* db_config = args->payload.targetTableMgr->getDbConfig();
+        if ( db_config->sortingWindowOpt.enabled &&
+             db_config->sortingWindowOpt.numRecords &&
+             db_config->sortingWindowOpt.maxSize ) {
+            // Sorting window.
+            args->payload.targetTableMgr->setTableFileOffsetSW
+                ( *args->payload.checkpoints,
+                  args->payload.sourceTableFile,
+                  args->payload.targetTableFile,
+                  *args->payload.offsets,
+                  args->payload.startIdx,
+                  args->payload.count );
+        } else {
+            args->payload.targetTableMgr->setTableFileOffset
+                ( *args->payload.checkpoints,
+                  args->payload.sourceTableFile,
+                  args->payload.targetTableFile,
+                  *args->payload.offsets,
+                  args->payload.startIdx,
+                  args->payload.count );
+        }
     }
 }
 

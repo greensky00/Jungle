@@ -21,6 +21,9 @@ limitations under the License.
 
 #include _MACRO_TO_STR(LOGGER_H)
 
+#include <map>
+#include <vector>
+
 namespace jungle {
 
 // Used for log -> L0 flush.
@@ -72,7 +75,6 @@ void TableMgr::setTableFileOffset( std::list<uint64_t>& checkpoints,
         global_config->ctOpt;
 
     Status s;
-    TableFile::Iterator itr;
     SizedBuf empty_key;
     std::list<Record*> recs_batch;
 
@@ -102,6 +104,12 @@ void TableMgr::setTableFileOffset( std::list<uint64_t>& checkpoints,
             _log_fatal(myLog, "failed to read record at %zu", offsets[ii]);
             assert(0);
             continue;
+        }
+
+        SizedBuf data_to_hash = rec_out.kv.key;
+        if ( db_config->keyLenLimitForHash &&
+             data_to_hash.size > db_config->keyLenLimitForHash ) {
+            data_to_hash.size = db_config->keyLenLimitForHash;
         }
         uint32_t key_hash_val = getMurmurHash32(rec_out.kv.key);;
         uint64_t offset_out = 0; // not used.
@@ -145,9 +153,231 @@ void TableMgr::setTableFileOffset( std::list<uint64_t>& checkpoints,
 
    } catch (Status s) { // -----------------------------------
     _log_err(myLog, "got error: %d", (int)s);
-    itr.close();
 
     for (Record* rr: recs_batch) {
+        if (!rr) continue;
+        rr->free();
+        delete rr;
+    }
+   }
+}
+
+// Instead of random read, using sorting window to maximize the read performance.
+void TableMgr::setTableFileOffsetSW( std::list<uint64_t>& checkpoints,
+                                     TableFile* src_file,
+                                     TableFile* dst_file,
+                                     std::vector<uint64_t>& offsets,
+                                     uint64_t start_index,
+                                     uint64_t count )
+{
+    const DBConfig* db_config = getDbConfig();
+    (void)db_config;
+
+    DBMgr* mgr = DBMgr::getWithoutInit();
+    DebugParams d_params = mgr->getDebugParams();
+
+    size_t num_levels = mani->getNumLevels();
+    size_t dst_level = (dst_file && dst_file->getTableInfo()) ?
+                       dst_file->getTableInfo()->level : 0;
+
+    const GlobalConfig* global_config = mgr->getGlobalConfig();
+    const GlobalConfig::CompactionThrottlingOptions& t_opt =
+        global_config->ctOpt;
+
+    Status s;
+    SizedBuf empty_key;
+    std::list<Record*> recs_batch;
+
+    Timer elapsed_timer;
+    Timer sync_timer;
+    Timer throttling_timer(t_opt.resolution_ms);
+    sync_timer.setDurationMs(db_config->preFlushDirtyInterval_sec * 1000);
+
+    uint64_t total_dirty = 0;
+    uint64_t time_for_flush_us = 0;
+
+    const size_t max_window_size = db_config->sortingWindowOpt.numRecords;
+    const size_t max_window_records_bytes = db_config->sortingWindowOpt.maxSize;
+    std::vector<Record*> records_window{max_window_size, nullptr};
+
+    _log_info(myLog, "write batch %zu with sorting window %zu %zu",
+              count, max_window_size, max_window_records_bytes);
+
+   try {
+    uint64_t cur_window_size = max_window_size;
+    uint64_t cursor_s = start_index;
+    uint64_t cursor_e = std::min(cursor_s + max_window_size, start_index + count);
+    size_t round_count = 0;
+
+    while (cursor_s < cursor_e) {
+        Timer round_timer;
+        Timer phase_timer;
+        uint64_t s_time = 0, r_time = 0, w_time = 0;
+
+        // <offset, vector index>
+        std::map<uint64_t, uint64_t> offset_idx_map;
+
+        // Sort phase.
+        size_t idx = 0;
+        for (uint64_t ii = cursor_s; ii < cursor_e; ++ii) {
+            offset_idx_map[offsets[ii]] = idx++;
+        }
+        s_time = phase_timer.getUs();
+        phase_timer.reset();
+
+        // Read phase.
+        uint64_t read_count = 0;
+        uint64_t cur_window_records_bytes = 0;
+        bool retry = false;
+        for (auto& entry: offset_idx_map) {
+            if (!isCompactionAllowed()) {
+                // To avoid file corruption, we should flush all cached pages
+                // even for cancel.
+                Timer cancel_timer;
+                dst_file->sync();
+                _log_info(myLog, "cancel sync %zu us", cancel_timer.getUs());
+                throw Status(Status::COMPACTION_CANCELLED);
+            }
+            Record* rec_out = new Record();
+            s = src_file->getByOffset(nullptr, entry.first, *rec_out);
+            if (!s) {
+                _log_fatal(myLog, "failed to read record at %zu", entry.first);
+                assert(0);
+                delete rec_out;
+                continue;
+            }
+            records_window[entry.second] = rec_out;
+            cur_window_records_bytes += rec_out->size();
+            read_count++;
+
+            if (cur_window_records_bytes > max_window_records_bytes) {
+                // The total size of records read is bigger than allowed memory size.
+                // Reduce the window size and retry.
+
+                // Reduce by 10x.
+                uint64_t prev_window_size = cur_window_size;
+                cur_window_size /= 10;
+
+                _log_info(myLog, "exceeded window memory limit, window size %zu / %zu, "
+                          "record size %zu / %zu, "
+                          "reduced window size %zu -> %zu",
+                          read_count, offset_idx_map.size(),
+                          cur_window_records_bytes, max_window_records_bytes,
+                          prev_window_size, cur_window_size);
+                cursor_e = std::min(cursor_s + cur_window_size, start_index + count);
+                for (size_t jj = 0; jj < records_window.size(); ++jj) {
+                    if (!records_window[jj]) continue;
+                    records_window[jj]->free();
+                    delete records_window[jj];
+                    records_window[jj] = nullptr;
+                }
+                retry = true;
+                break;
+            }
+        }
+        if (retry) continue;
+        r_time = phase_timer.getUs();
+        phase_timer.reset();
+
+        // Write phase.
+        for (uint64_t ii = 0; ii < offset_idx_map.size(); ++ii) {
+            if (!records_window[ii]) {
+                // This shouldn't happen (caused by above fatal error).
+                assert(0);
+                continue;
+            }
+            if (!isCompactionAllowed()) {
+                // To avoid file corruption, we should flush all cached pages
+                // even for cancel.
+                Timer cancel_timer;
+                dst_file->sync();
+                _log_info(myLog, "cancel sync %zu us", cancel_timer.getUs());
+                throw Status(Status::COMPACTION_CANCELLED);
+            }
+
+            Record& rec_out = *records_window[ii];
+
+            SizedBuf data_to_hash = rec_out.kv.key;
+            if ( db_config->keyLenLimitForHash &&
+                 data_to_hash.size > db_config->keyLenLimitForHash ) {
+                data_to_hash.size = db_config->keyLenLimitForHash;
+            }
+            uint32_t key_hash_val = getMurmurHash32(data_to_hash);
+            uint64_t offset_out = 0; // not used.
+
+            // WARNING:
+            //   Since `rec_out` from `getByOffset` contains raw meta and
+            //   compressed value (if enabled), we should skip processing
+            //   meta and compression.
+            dst_file->setSingle(key_hash_val, rec_out, offset_out,
+                                true, dst_level + 1 == num_levels);
+            total_dirty += rec_out.size();
+
+            records_window[ii]->free();
+            delete records_window[ii];
+            records_window[ii] = nullptr;
+
+            if (d_params.compactionItrScanDelayUs) {
+                // If debug parameter is given, sleep here.
+                Timer::sleepUs(d_params.compactionItrScanDelayUs);
+            }
+
+            // Periodic flushing to avoid burst disk write & freeze,
+            // which have great impact on (user-facing) latency.
+            if ( ( db_config->preFlushDirtySize &&
+                   db_config->preFlushDirtySize < total_dirty ) ||
+                 sync_timer.timeout() ) {
+                Timer flush_time;
+                dst_file->sync();
+                // Resetting timer should be done after fsync,
+                // as it may take long time.
+                sync_timer.reset();
+                throttling_timer.reset();
+                total_dirty = 0;
+                time_for_flush_us += flush_time.getUs();
+            }
+
+            // Do throttling, if enabled.
+            TableMgr::doCompactionThrottling(t_opt, throttling_timer);
+        }
+        w_time = phase_timer.getUs();
+        phase_timer.reset();
+
+        // Gradually increase window (if reduced).
+        if (cur_window_size < max_window_size) {
+            cur_window_size *= 1.1;
+            cur_window_size = std::min(cur_window_size, max_window_size);
+        }
+
+        // Everything is done, move window.
+        _log_info(myLog, "setTableFileOffsetSW round %zu done, "
+                  "%zu - %zu (%zu, %zu bytes), "
+                  "%zu us, next window %zu, s_time %zu, r_time %zu, w_time %zu",
+                  round_count, cursor_s, cursor_e,
+                  cursor_e - cursor_s, cur_window_records_bytes,
+                  round_timer.getUs(),
+                  cur_window_size,
+                  s_time, r_time, w_time);
+        cursor_s = cursor_e;
+        cursor_e = std::min(cursor_s + cur_window_size, start_index + count);
+        round_count++;
+    }
+
+    // Final commit, and generate snapshot on it.
+    setTableFileItrFlush(dst_file, recs_batch, false);
+    _log_info(myLog, "(end of batch) set total %zu records, %zu us, %zu us for flush",
+              count, elapsed_timer.getUs(), time_for_flush_us);
+
+   } catch (Status s) { // -----------------------------------
+    _log_err(myLog, "got error: %d", (int)s);
+
+    for (Record* rr: recs_batch) {
+        if (!rr) continue;
+        rr->free();
+        delete rr;
+    }
+    for (Record* rr: records_window) {
+        if (!rr) continue;
         rr->free();
         delete rr;
     }

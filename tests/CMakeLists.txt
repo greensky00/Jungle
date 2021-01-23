@@ -123,6 +123,10 @@ add_dependencies(func_test
                  large_test
                  atomic_batch_test)
 
+set(GENERAL_ST_TEST ${TEST_DIR}/stress/general_stress_test.cc)
+add_executable(general_stress_test ${GENERAL_ST_TEST})
+target_link_libraries(general_stress_test ${JUNGLE_TEST_DEPS})
+add_dependencies(general_stress_test static_lib)
 
 set(FLUSH_ST_TEST ${TEST_DIR}/stress/flush_stress_test.cc)
 add_executable(flush_stress_test ${FLUSH_ST_TEST})

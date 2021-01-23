@@ -84,7 +84,8 @@ void TableMgr::logTableSettings(const DBConfig* db_config) {
                    "num writes to compact %zu, "
                    "min file size %zu, cycle at least %u at most %u, "
                    "tombstones: %s, fast index scan: %s, "
-                   "num log files for throttling limit %zu - %zu",
+                   "num log files for throttling limit %zu - %zu, "
+                   "sorting window: %s",
                    db_config->compactionFactor,
                    db_config->blockReuseFactor,
                    db_config->numWritesToCompact,
@@ -96,7 +97,9 @@ void TableMgr::logTableSettings(const DBConfig* db_config) {
                    db_config->fastIndexScan
                    ? "ON" : "OFF",
                    db_config->throttlingNumLogFilesSoft,
-                   db_config->throttlingNumLogFilesHard );
+                   db_config->throttlingNumLogFilesHard,
+                   db_config->sortingWindowOpt.enabled
+                   ? "ON" : "OFF" );
     } else {
         _log_info(myLog, "auto compaction is disabled");
     }

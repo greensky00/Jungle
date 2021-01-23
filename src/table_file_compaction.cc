@@ -248,19 +248,149 @@ Status TableFile::compactToManully(FdbHandle* compact_handle,
         //   will be better for performance, but we should keep
         //   records in memory to write them to the destination
         //   file in a key order.
+        const size_t max_window_size = local_config.sortingWindowOpt.numRecords;
+        const size_t max_window_records_bytes = local_config.sortingWindowOpt.maxSize;
+        if ( local_config.sortingWindowOpt.enabled &&
+             max_window_size &&
+             max_window_records_bytes ) {
+            // Offset-order read, and sort by key.
+            std::vector<fdb_doc*> records_window{max_window_size, nullptr};
+            uint64_t cur_window_size = max_window_size;
+            uint64_t count = offsets.size();
+            uint64_t cursor_s = 0;
+            uint64_t cursor_e = std::min(cursor_s + max_window_size, count);
+            size_t round_count = 0;
+            bool compaction_cancelled = false;
 
-        for (uint64_t cur_offset: offsets) {
-            fdb_doc tmp_doc;
-            memset(&tmp_doc, 0x0, sizeof(tmp_doc));
-            tmp_doc.offset = cur_offset;
+            while (cursor_s < cursor_e) {
+                Timer round_timer;
+                Timer phase_timer;
+                uint64_t s_time = 0, r_time = 0, w_time = 0;
 
-            fs = fdb_get_byoffset_raw(compact_handle->db, &tmp_doc);
-            if (fs != FDB_RESULT_SUCCESS) break;
+                // <offset, vector index>
+                std::map<uint64_t, uint64_t> offset_idx_map;
 
-            if (!write_to_new_file(&tmp_doc)) {
-                break;
+                // Sort phase.
+                size_t idx = 0;
+                for (uint64_t ii = cursor_s; ii < cursor_e; ++ii) {
+                    offset_idx_map[offsets[ii]] = idx++;
+                }
+                s_time = phase_timer.getUs();
+                phase_timer.reset();
+
+                // Read phase.
+                uint64_t read_count = 0;
+                uint64_t cur_window_records_bytes = 0;
+                bool retry = false;
+                for (auto& entry: offset_idx_map) {
+                    fdb_doc* tmp_doc = (fdb_doc*)malloc(sizeof(fdb_doc));
+                    memset(tmp_doc, 0x0, sizeof(fdb_doc));
+                    tmp_doc->offset = entry.first;
+
+                    fs = fdb_get_byoffset_raw(compact_handle->db, tmp_doc);
+                    if (fs != FDB_RESULT_SUCCESS) {
+                        _log_fatal(myLog, "failed to read record at %zu", entry.first);
+                        assert(0);
+                        fdb_doc_free(tmp_doc);
+                        continue;
+                    }
+                    records_window[entry.second] = tmp_doc;
+                    cur_window_records_bytes +=
+                        tmp_doc->keylen + tmp_doc->metalen + tmp_doc->bodylen;
+                    read_count++;
+
+                    if (cur_window_records_bytes > max_window_records_bytes) {
+                        // The total size of records read is bigger than
+                        // allowed memory size.
+                        // Reduce the window size and retry.
+
+                        // Reduce by 10x.
+                        uint64_t prev_window_size = cur_window_size;
+                        cur_window_size /= 10;
+
+                        _log_info(myLog, "exceeded window memory limit, "
+                                  "window size %zu / %zu, "
+                                  "record size %zu / %zu, "
+                                  "reduced window size %zu -> %zu",
+                                  read_count, offset_idx_map.size(),
+                                  cur_window_records_bytes, max_window_records_bytes,
+                                  prev_window_size, cur_window_size);
+                        cursor_e = std::min(cursor_s + cur_window_size, count);
+                        for (size_t jj = 0; jj < records_window.size(); ++jj) {
+                            if (!records_window[jj]) continue;
+                            fdb_doc_free(records_window[jj]);
+                            records_window[jj] = nullptr;
+                        }
+                        retry = true;
+                        break;
+                    }
+                }
+                if (retry) continue;
+                r_time = phase_timer.getUs();
+                phase_timer.reset();
+
+                // Write phase.
+                for (uint64_t ii = 0; ii < offset_idx_map.size(); ++ii) {
+                    if (!records_window[ii]) {
+                        // This shouldn't happen (caused by above fatal error).
+                        assert(0);
+                        continue;
+                    }
+
+                    bool ok_to_go = write_to_new_file(records_window[ii]);
+                    free(records_window[ii]);
+                    records_window[ii] = nullptr;
+
+                    if (!ok_to_go) {
+                        // Compaction cancelled.
+                        compaction_cancelled = true;
+                        for (fdb_doc* fd: records_window) {
+                            if (!fd) continue;
+                            fdb_doc_free(fd);
+                        }
+                        break;
+                    }
+                }
+                if (compaction_cancelled) break;
+
+                w_time = phase_timer.getUs();
+                phase_timer.reset();
+
+                // Gradually increase window (if reduced).
+                if (cur_window_size < max_window_size) {
+                    cur_window_size *= 1.1;
+                    cur_window_size = std::min(cur_window_size, max_window_size);
+                }
+
+                // Everything is done, move window.
+                _log_info(myLog, "compactToManually round %zu done, "
+                          "%zu - %zu (%zu, %zu bytes), "
+                          "%zu us, next window %zu, s_time %zu, r_time %zu, w_time %zu",
+                          round_count, cursor_s, cursor_e,
+                          cursor_e - cursor_s, cur_window_records_bytes,
+                          round_timer.getUs(),
+                          cur_window_size,
+                          s_time, r_time, w_time);
+                cursor_s = cursor_e;
+                cursor_e = std::min(cursor_s + cur_window_size, count);
+                round_count++;
             }
-        };
+
+        } else {
+            // Key-order read (random offset).
+            for (uint64_t cur_offset: offsets) {
+                fdb_doc tmp_doc;
+                memset(&tmp_doc, 0x0, sizeof(tmp_doc));
+                tmp_doc.offset = cur_offset;
+
+                fs = fdb_get_byoffset_raw(compact_handle->db, &tmp_doc);
+                if (fs != FDB_RESULT_SUCCESS) break;
+
+                if (!write_to_new_file(&tmp_doc)) {
+                    break;
+                }
+            }
+        }
 
     } else {
         // Normal iteration.
