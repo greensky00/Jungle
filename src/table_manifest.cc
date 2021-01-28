@@ -588,7 +588,7 @@ Status TableManifest::getTablesPoint(const size_t level,
         if (cur_prev) {
             TableInfo* t_prev = _get_entry(cur_prev, TableInfo, snode);
             t_prev->grab();
-            pushTablesInStack(t_info, tables_out);
+            pushTablesInStack(t_prev, tables_out);
             tables_out.push_back(t_prev);
             skiplist_release_node(cur_prev);
         }
