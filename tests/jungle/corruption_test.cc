@@ -926,7 +926,8 @@ int duplicate_seq_flush_test() {
 #include <libjungle/jungle.h>
 
 // To access the internal structure of DB.
-namespace jungle::checker {
+namespace jungle {
+namespace checker {
 class Checker {
 public:
 static int corrupted_table_manifest_test() {
@@ -1036,7 +1037,8 @@ static int corrupted_table_manifest_test() {
     return 0;
 }
 };
-} // namespace jungle::checker
+} // namespace checker
+} // namespace jungle
 
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
