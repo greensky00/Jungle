@@ -917,8 +917,126 @@ int duplicate_seq_flush_test() {
     return 0;
 }
 
-
 } using namespace corruption_test;
+
+#include "db_internal.h"
+#include "table_manifest.h"
+#include "table_mgr.h"
+
+#include <libjungle/jungle.h>
+
+// To access the internal structure of DB.
+namespace jungle::checker {
+class Checker {
+public:
+static int corrupted_table_manifest_test() {
+    std::string filename;
+    TEST_SUITE_PREPARE_PATH(filename);
+
+    jungle::Status s;
+
+    // Open DB.
+    jungle::DBConfig config;
+    TEST_CUSTOM_DB_CONFIG(config);
+    config.minFileSizeToCompact = 65536;
+    jungle::DB* db;
+    CHK_Z(jungle::DB::open(&db, filename, config));
+
+    const size_t NUM = 10000;
+
+    // Write something.
+    for (size_t ii=0; ii<NUM; ++ii) {
+        std::string key_str = "k" + TestSuite::lzStr(6, ii * 10);
+        std::string val_str = "v" + TestSuite::lzStr(6, ii * 10);
+        CHK_Z( db->set(jungle::KV(key_str, val_str)) );
+    }
+    CHK_Z( db->sync(false) );
+    CHK_Z( db->flushLogs() );
+
+    for (size_t ii = 0; ii < 4; ++ii) {
+        CHK_Z( db->compactL0(jungle::CompactOptions(), ii) );
+    }
+
+    std::list<TableInfo*> tables_out;
+    db->p->tableMgr->mani->getTablesRange(1, SizedBuf(), SizedBuf(), tables_out);
+
+    TableInfo* t1 = nullptr;
+    TableInfo* t2 = nullptr;
+    auto itr = tables_out.begin();
+    for (size_t ii = 0; ii < 3; ++ii) {
+        if (ii == 1) {
+            t1 = *itr;
+        }
+        if (ii == 2) {
+            t2 = *itr;
+        }
+        itr++;
+    }
+    int t1_idx = std::atoi(t2->minKey.toString().substr(1).c_str()) + 1;
+    int t2_idx = std::atoi(t2->minKey.toString().substr(1).c_str());
+
+    {    // Insert a record whose key is bigger than t2's min key.
+        uint64_t offset_out;
+        Record rec;
+        std::string key_str = "k" + TestSuite::lzStr(6, t1_idx);
+        std::string val_str = "v" + TestSuite::lzStr(6, t1_idx);
+        rec.kv = KV(key_str, val_str);
+        rec.seqNum = NUM * 2;
+        uint32_t key_hash_val = getMurmurHash32(rec.kv.key);;
+        CHK_Z( t1->file->setSingle(key_hash_val, rec, offset_out, false, true) );
+    }
+
+    {    // Insert a record with existing key but higher seq number.
+        uint64_t offset_out;
+        Record rec;
+        std::string key_str = "k" + TestSuite::lzStr(6, t2_idx);
+        std::string val_str = "V" + TestSuite::lzStr(6, t2_idx);
+        rec.kv = KV(key_str, val_str);
+        rec.seqNum = NUM * 2 + 1;
+        uint32_t key_hash_val = getMurmurHash32(rec.kv.key);;
+        CHK_Z( t1->file->setSingle(key_hash_val, rec, offset_out, false, true) );
+    }
+
+    // Commit.
+    std::list<Record*> rr;
+    std::list<uint64_t> cc;
+    SizedBuf empty_key;
+    CHK_Z( t1->file->setBatch(rr, cc, empty_key, empty_key, -1, false) );
+
+    for (TableInfo* ii: tables_out) {
+        ii->done();
+    }
+
+    // Close and reopen.
+    CHK_Z(jungle::DB::close(db));
+    CHK_Z(jungle::DB::open(&db, filename, config));
+
+    // Both key should be found.
+    {
+        std::string key_str = "k" + TestSuite::lzStr(6, t1_idx);
+        std::string val_str = "v" + TestSuite::lzStr(6, t1_idx);
+        SizedBuf value_out;
+        SizedBuf::Holder h(value_out);
+        CHK_Z( db->get(SizedBuf(key_str), value_out) );
+        CHK_EQ(val_str, value_out.toString());
+    }
+    {
+        std::string key_str = "k" + TestSuite::lzStr(6, t2_idx);
+        std::string val_str = "V" + TestSuite::lzStr(6, t2_idx);
+        SizedBuf value_out;
+        SizedBuf::Holder h(value_out);
+        CHK_Z( db->get(SizedBuf(key_str), value_out) );
+        CHK_EQ(val_str, value_out.toString());
+    }
+
+    CHK_Z(jungle::DB::close(db));
+    CHK_Z(jungle::shutdown());
+
+    TEST_SUITE_CLEANUP_PATH();
+    return 0;
+}
+};
+} // namespace jungle::checker
 
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
@@ -961,6 +1079,10 @@ int main(int argc, char** argv) {
 
     ts.doTest("duplicate seq number test",
               duplicate_seq_flush_test);
+
+    ts.doTest("corrupted table manifest test",
+              jungle::checker::Checker::corrupted_table_manifest_test);
+
 
     return 0;
 }
