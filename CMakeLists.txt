@@ -44,11 +44,11 @@ endif()
 set(LIBDL dl)
 
 # Includes
-include_directories(BEFORE ./)
-include_directories(BEFORE ${PROJECT_SOURCE_DIR}/src)
-include_directories(BEFORE ${PROJECT_SOURCE_DIR}/include)
-include_directories(BEFORE ${PROJECT_SOURCE_DIR}/tools)
-include_directories(BEFORE ${PROJECT_SOURCE_DIR}/tests)
+include_directories(AFTER ./)
+include_directories(AFTER ${PROJECT_SOURCE_DIR}/src)
+include_directories(AFTER ${PROJECT_SOURCE_DIR}/include)
+include_directories(AFTER ${PROJECT_SOURCE_DIR}/tools)
+include_directories(AFTER ${PROJECT_SOURCE_DIR}/tests)
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
@@ -216,6 +216,7 @@ if (CODE_COVERAGE GREATER 0)
                      compaction_test
                      mt_test
                      log_reclaim_test
+                     custom_mani_verifier
                      level_extension_test
                      table_lookup_booster_test
                      compression_test
