@@ -49,7 +49,7 @@ Status TableMgr::pickVictimTable(size_t level,
     bool d_params_effective = db_mgr->isDebugParamEffective();
 
     const DBConfig* db_config = getDbConfig();
-    uint64_t MAX_TABLE_SIZE = db_config->getMaxTableSize(level);
+    const uint64_t MAX_TABLE_SIZE = db_config->getMaxTableSize(level);
 
     std::list<TableInfo*> tables;
     SizedBuf empty_key;
@@ -94,7 +94,6 @@ Status TableMgr::pickVictimTable(size_t level,
 
         uint64_t w_size = t_stats.workingSetSizeByte;
         uint64_t t_size = t_stats.totalSizeByte;
-        size_t stack_size = 1;
 
         // If stack exists, sum up all.
         TableStack* stack = t_info->stack;
@@ -107,7 +106,6 @@ Status TableMgr::pickVictimTable(size_t level,
 
                 w_size += t_stats.workingSetSizeByte;
                 t_size += t_stats.totalSizeByte;
-                stack_size++;
             }
         }
 
@@ -200,6 +198,8 @@ Status TableMgr::pickVictimTable(size_t level,
         bool do_merge = false;
         if (min_wss < std::numeric_limits<uint64_t>::max()) {
             if (honor_limit) {
+                _log_info(myLog, "min wss %lu wss avg %lu max %lu",
+                          min_wss, wss_avg, MAX_TABLE_SIZE);
                 if(min_wss < wss_avg * 0.2) {
                     // If we honor the limit, merge the table if the smallest
                     // table's WSS is smaller than 20% of average.
@@ -223,6 +223,9 @@ Status TableMgr::pickVictimTable(size_t level,
                             TableStats src_stats, dst_stats;
                             tt->file->getStats(src_stats);
                             dst_table->file->getStats(dst_stats);
+                            _log_info(myLog, "src %lu dst %lu",
+                                      src_stats.workingSetSizeByte,
+                                      dst_stats.workingSetSizeByte);
                             if ( src_stats.workingSetSizeByte &&
                                  dst_stats.workingSetSizeByte &&
                                  src_stats.workingSetSizeByte < wss_avg &&
@@ -702,6 +705,7 @@ Status TableMgr::chkLPCompactCond(size_t level,
         s = pickVictimTable( level, v_policy, true,
                              victim_table, wss, total );
         if (s && victim_table) {
+            _log_info(myLog, "found urgent compact %lu", victim_table->number);
             s_out = TableMgr::INPLACE;
             victim_table_out = victim_table;
             return s;
@@ -710,8 +714,10 @@ Status TableMgr::chkLPCompactCond(size_t level,
 
     TableInfo* victim_table = nullptr;
     // Find table to fix (highest priority).
+    _log_info(myLog, "check fix");
     s = pickTableToFix(level, victim_table);
     if (s && victim_table) {
+        _log_info(myLog, "found fix %lu", victim_table->number);
         s_out = TableMgr::FIX;
         victim_table_out = victim_table;
         return s;
@@ -720,9 +726,11 @@ Status TableMgr::chkLPCompactCond(size_t level,
     // Find table to split (when WSS > 1.5x table limit).
     TableMgr::VictimPolicy v_policy = TableMgr::WORKING_SET_SIZE_SPLIT;
     wss = total = 0;
+    _log_info(myLog, "check split");
     s = pickVictimTable( level, v_policy, true,
                          victim_table, wss, total );
     if (s && victim_table) {
+        _log_info(myLog, "found split %lu", victim_table->number);
         s_out = force_interlevel ? TableMgr::INTERLEVEL : TableMgr::SPLIT;
         victim_table_out = victim_table;
         return s;
@@ -733,9 +741,11 @@ Status TableMgr::chkLPCompactCond(size_t level,
     v_policy = TableMgr::STALE_RATIO;
     victim_table = nullptr;
     wss = total = 0;
+    _log_info(myLog, "check in-place compact");
     s = pickVictimTable( level, v_policy, true,
                          victim_table, wss, total );
     if (s && victim_table) {
+        _log_info(myLog, "found in-place compact %lu", victim_table->number);
         s_out = force_interlevel ? TableMgr::INTERLEVEL : TableMgr::INPLACE;
         victim_table_out = victim_table;
         return s;
@@ -745,9 +755,11 @@ Status TableMgr::chkLPCompactCond(size_t level,
     v_policy = TableMgr::SMALL_WORKING_SET;
     victim_table = nullptr;
     wss = total = 0;
+    _log_info(myLog, "check merge");
     s = pickVictimTable( level, v_policy, true,
                          victim_table, wss, total );
     if (s && victim_table) {
+        _log_info(myLog, "found merge %lu", victim_table->number);
         s_out = TableMgr::MERGE;
         victim_table_out = victim_table;
         return s;
