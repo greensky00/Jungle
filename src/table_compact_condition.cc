@@ -230,8 +230,9 @@ Status TableMgr::pickVictimTable(size_t level,
                                       dst_stats.totalSizeByte);
                             if ( src_stats.totalSizeByte &&
                                  dst_stats.totalSizeByte &&
-                                 src_stats.workingSetSizeByte <= wss_avg &&
-                                 dst_stats.workingSetSizeByte <= wss_avg * 1.6 ) {
+                                 ( ( src_stats.workingSetSizeByte <= wss_avg &&
+                                     dst_stats.workingSetSizeByte <= wss_avg * 1.6 ) ||
+                                   src_stats.workingSetSizeByte == 0 ) ) {
                                 _log_info(
                                     myLog, "merge by small level average, "
                                     "victim table %zu, wss %zu (%s), "
