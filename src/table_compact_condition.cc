@@ -200,12 +200,12 @@ Status TableMgr::pickVictimTable(size_t level,
             if (honor_limit) {
                 _log_info(myLog, "min wss %lu wss avg %lu max %lu",
                           min_wss, wss_avg, MAX_TABLE_SIZE);
-                if(min_wss < wss_avg * 0.2) {
+                if(min_wss <= wss_avg * 0.2) {
                     // If we honor the limit, merge the table if the smallest
                     // table's WSS is smaller than 20% of average.
                     do_merge = true;
                 }
-                if (wss_avg < MAX_TABLE_SIZE * 0.4) {
+                if (wss_avg <= MAX_TABLE_SIZE * 0.4) {
                     // If average WSS is smaller than 40% of max table size,
                     // there are more tables than expected.
                     // Merge tables whose size is lower than average, ONLY WHEN
@@ -223,13 +223,15 @@ Status TableMgr::pickVictimTable(size_t level,
                             TableStats src_stats, dst_stats;
                             tt->file->getStats(src_stats);
                             dst_table->file->getStats(dst_stats);
-                            _log_info(myLog, "src %lu dst %lu",
+                            _log_info(myLog, "src %lu %lu dst %lu %lu",
                                       src_stats.workingSetSizeByte,
-                                      dst_stats.workingSetSizeByte);
-                            if ( src_stats.workingSetSizeByte &&
-                                 dst_stats.workingSetSizeByte &&
-                                 src_stats.workingSetSizeByte < wss_avg &&
-                                 dst_stats.workingSetSizeByte < wss_avg * 1.6 ) {
+                                      src_stats.totalSizeByte,
+                                      dst_stats.workingSetSizeByte,
+                                      dst_stats.totalSizeByte);
+                            if ( src_stats.totalSizeByte &&
+                                 dst_stats.totalSizeByte &&
+                                 src_stats.workingSetSizeByte <= wss_avg &&
+                                 dst_stats.workingSetSizeByte <= wss_avg * 1.6 ) {
                                 _log_info(
                                     myLog, "merge by small level average, "
                                     "victim table %zu, wss %zu (%s), "
