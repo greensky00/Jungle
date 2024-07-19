@@ -354,6 +354,8 @@ Status FileOpsDirectIO::append(FileHandle* fhandle,
                                const void* buf,
                                size_t count)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandleDirectIO* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -436,6 +438,8 @@ cs_off_t FileOpsDirectIO::eof(FileHandle* fhandle) {
 }
 
 Status FileOpsDirectIO::flush(FileHandle* fhandle) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandleDirectIO* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -507,6 +511,8 @@ Status FileOpsDirectIO::flush(FileHandle* fhandle) {
 }
 
 Status FileOpsDirectIO::fsync(FileHandle* fhandle) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandleDirectIO* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -530,6 +536,8 @@ Status FileOpsDirectIO::fsync(FileHandle* fhandle) {
 Status FileOpsDirectIO::ftruncate(FileHandle* fhandle,
                                   cs_off_t _length)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandleDirectIO* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;

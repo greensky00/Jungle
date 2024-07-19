@@ -112,6 +112,8 @@ Status FileOpsPosix::pwrite(FileHandle* fhandle,
                             size_t count,
                             cs_off_t offset)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandlePosix* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -137,6 +139,8 @@ Status FileOpsPosix::append(FileHandle* fhandle,
                             const void* buf,
                             size_t count)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandlePosix* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -174,6 +178,8 @@ Status FileOpsPosix::flush(FileHandle* fhandle) {
 }
 
 Status FileOpsPosix::fsync(FileHandle* fhandle) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandlePosix* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;
@@ -187,6 +193,8 @@ Status FileOpsPosix::fsync(FileHandle* fhandle) {
 Status FileOpsPosix::ftruncate(FileHandle* fhandle,
                                cs_off_t length)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     FileHandlePosix* phandle = getHandle(fhandle);
     if (!phandle) return Status::NULL_FILEOPS_HANDLE;
     if (phandle->fd <= 0) return Status::INVALID_FILE_DESCRIPTOR;

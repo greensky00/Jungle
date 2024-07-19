@@ -20,6 +20,8 @@ limitations under the License.
 #include "internal_helper.h"
 #include "log_mgr.h"
 
+#include "libjungle/jungle_latency.h"
+
 #include _MACRO_TO_STR(LOGGER_H)
 
 namespace jungle {
@@ -402,6 +404,8 @@ Status LogFile::getPrefix(const uint64_t chk,
 }
 
 Status LogFile::flushMemTable(uint64_t upto) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
    touch();
    // Skip unnecessary flushing
    if (immutable && !fHandle && isSynced()) {

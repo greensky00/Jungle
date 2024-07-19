@@ -22,6 +22,8 @@ limitations under the License.
 #include "libjungle/jungle.h"
 #include "murmurhash3.h"
 
+#include "libjungle/jungle_latency.h"
+
 #include <atomic>
 #include <chrono>
 #include <iomanip>

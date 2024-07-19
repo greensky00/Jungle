@@ -491,6 +491,8 @@ Status LogManifest::store(bool call_fsync) {
 }
 
 Status LogManifest::storeInternal(bool call_fsync) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     Status s;
 
     SizedBuf mani_buf(4096);

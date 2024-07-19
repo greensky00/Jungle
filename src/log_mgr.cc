@@ -1137,6 +1137,8 @@ Status LogMgr::syncNoWait(bool call_fsync) {
 }
 
 Status LogMgr::syncInternal(bool call_fsync) {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     Status s;
     uint64_t ln_from, ln_to;
     s = mani->getMaxLogFileNum(ln_to);

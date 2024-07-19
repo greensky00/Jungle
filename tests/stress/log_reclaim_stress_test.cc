@@ -21,6 +21,8 @@ limitations under the License.
 #include <atomic>
 #include <fstream>
 
+#include "libjungle/jungle_latency.h"
+
 #include <stdio.h>
 
 namespace log_reclaim_stress_test {
@@ -177,15 +179,64 @@ int log_reclaim_with_queries_test(size_t dur_sec) {
     return 0;
 }
 
+int log_flush_latency_test(size_t num_logs) {
+    std::string filename;
+    TEST_SUITE_PREPARE_PATH(filename);
+
+    jungle::Status s;
+    TestSuite::Msg m;
+
+    jungle::GlobalConfig g_config;
+    jungle::init(g_config);
+
+    jungle::DBConfig config;
+    //config.directIoOpt.enabled = true;
+    TEST_CUSTOM_DB_CONFIG(config);
+    config.logSectionOnly = true;
+    if (config.directIoOpt.enabled) {
+        m << "Direct IO enabled" << std::endl;
+    } else {
+        m << "Direct IO disabled" << std::endl;
+    }
+
+    // 1KB value.
+    std::string value("x", 1024);
+
+    jungle::DB* db;
+    CHK_Z(jungle::DB::open(&db, filename, config));
+
+    TestSuite::Progress pp(num_logs);
+
+    for (size_t ii = 0; ii < num_logs; ++ii) {
+        db->setSN(ii + 1, jungle::KV(TestSuite::lzStr(8, ii + 1), value));
+        db->sync();
+        pp.update(ii + 1);
+    }
+    pp.done();
+
+    CHK_Z(jungle::DB::close(db));
+    CHK_Z(jungle::shutdown());
+
+    m << JungleLatency::dump() << std::endl;
+
+    return 0;
+}
+
 } using namespace log_reclaim_stress_test;
 
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
     ts.options.printTestMessage = true;
+
+#if 0
     ts.doTest("log reclaim with point and range queries test",
               log_reclaim_with_queries_test,
               TestRange<size_t>({10}));
+#endif
+    ts.doTest("log flush latency test",
+              log_flush_latency_test,
+              TestRange<size_t>({1000}));
 
     return 0;
 }

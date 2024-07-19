@@ -326,6 +326,8 @@ Status BackupRestore::backup(FileOps* f_ops,
                              size_t bytes_to_skip,
                              bool call_fsync)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     Status s;
     std::string dst_file = filename + ".bak";
 

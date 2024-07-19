@@ -1235,6 +1235,8 @@ Status MemTable::findOffsetOfSeq(SimpleLogger* logger,
 // MemTable flush: skiplist (memory) -> log file. (disk)
 Status MemTable::flush(RwSerializer& rws, uint64_t upto)
 {
+    collectFuncLatency(JungleLatency::getLatencyCollector());
+
     if (minSeqNum == NOT_INITIALIZED) {
         // No log in this file. Just do nothing and return OK.
         return Status();
