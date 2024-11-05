@@ -905,11 +905,25 @@ Status TableFile::setSingle(uint32_t key_hash_val,
         InternalMeta i_meta_from_rec;
         readInternalMeta(rec.meta, i_meta_from_rec);
         if (i_meta_from_rec.isTombstone || force_delete) {
+            _log_err(myLog, "deletion is executed, key: %s, meta :%s"
+                     ", value size: %zu, seqnum: %" PRIu64
+                     ", isTombstone: %d, force_delete: %d",
+                     HexDump::toString(rec.kv.key).c_str(),
+                     HexDump::toString(doc.meta, doc.metalen).c_str(),
+                     rec.kv.value.size, rec.seqNum,
+                     i_meta_from_rec.isTombstone, force_delete);
             fs = fdb_del(kvs_db, &doc);
             deletion_executed = true;
         }
     }
     if (!deletion_executed) {
+        if (doc.deleted) {
+            _log_err(myLog, "deletion flag is set, but meta mismatch, key: %s, meta :%s"
+                     ", value size: %zu, seqnum: %" PRIu64,
+                     HexDump::toString(rec.kv.key).c_str(),
+                     HexDump::toString(doc.meta, doc.metalen).c_str(),
+                     rec.kv.value.size, rec.seqNum);
+        }
         fs = fdb_set(kvs_db, &doc);
     }
     if (fs != FDB_RESULT_SUCCESS) {
