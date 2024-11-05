@@ -373,7 +373,8 @@ private:
                                   SizedBuf& user_meta_out);
 
     static void readInternalMeta(const SizedBuf& raw_meta,
-                                 InternalMeta& internal_meta_out);
+                                 InternalMeta& internal_meta_out,
+                                 SimpleLogger* myLog = nullptr);
 
     static uint32_t tfExtractFlags(const SizedBuf& raw_meta);
 

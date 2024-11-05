@@ -737,7 +737,8 @@ void TableFile::rawMetaToUserMeta(const SizedBuf& raw_meta,
 }
 
 void TableFile::readInternalMeta(const SizedBuf& raw_meta,
-                                 InternalMeta& internal_meta_out)
+                                 InternalMeta& internal_meta_out,
+                                 SimpleLogger* myLog)
 {
     if (raw_meta.empty()) return;
 
@@ -756,7 +757,12 @@ void TableFile::readInternalMeta(const SizedBuf& raw_meta,
 
     // Flags.
     uint32_t flags = rw.getU32();
-    if (flags & TF_FLAG_TOMBSTONE) internal_meta_out.isTombstone = true;
+    if (flags & TF_FLAG_TOMBSTONE) {
+        internal_meta_out.isTombstone = true;
+        _log_info(myLog, "tombstone flag detected, flag: %u, tombstone flag: %u, raw meta: %s",
+                  flags, TF_FLAG_TOMBSTONE,
+                  HexDump::toString(raw_meta.data, std::max((uint32_t)32, raw_meta.size)).c_str());
+    }
     if (flags & TF_FLAG_COMPRESSED) internal_meta_out.isCompressed = true;
 
     if (internal_meta_out.isCompressed) {
@@ -905,13 +911,16 @@ Status TableFile::setSingle(uint32_t key_hash_val,
         InternalMeta i_meta_from_rec;
         readInternalMeta(rec.meta, i_meta_from_rec);
         if (i_meta_from_rec.isTombstone || force_delete) {
-            _log_err(myLog, "deletion is executed, key: %s, meta :%s"
+            _log_err(myLog, "deletion is executed"
                      ", value size: %zu, seqnum: %" PRIu64
-                     ", isTombstone: %d, force_delete: %d",
-                     HexDump::toString(rec.kv.key).c_str(),
-                     HexDump::toString(doc.meta, doc.metalen).c_str(),
+                     ", isTombstone: %d, force_delete: %d"
+                     ", is compressed: %d, original value size: %zu",
+                     ", key: %s, meta :%s",
                      rec.kv.value.size, rec.seqNum,
-                     i_meta_from_rec.isTombstone, force_delete);
+                     i_meta_from_rec.isTombstone, force_delete,
+                     i_meta_from_rec.isCompressed, i_meta_from_rec.originalValueLen,
+                     HexDump::toString(rec.kv.key).c_str(),
+                     HexDump::toString(doc.meta, std::max((size_t)32, doc.metalen)).c_str());
             fs = fdb_del(kvs_db, &doc);
             deletion_executed = true;
         }
@@ -921,7 +930,7 @@ Status TableFile::setSingle(uint32_t key_hash_val,
             _log_err(myLog, "deletion flag is set, but meta mismatch, key: %s, meta :%s"
                      ", value size: %zu, seqnum: %" PRIu64,
                      HexDump::toString(rec.kv.key).c_str(),
-                     HexDump::toString(doc.meta, doc.metalen).c_str(),
+                     HexDump::toString(doc.meta, std::max((size_t)32, doc.metalen)).c_str(),
                      rec.kv.value.size, rec.seqNum);
         }
         fs = fdb_set(kvs_db, &doc);
