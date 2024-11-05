@@ -909,12 +909,12 @@ Status TableFile::setSingle(uint32_t key_hash_val,
         // Immediate purging option,
         // only for the bottom-most non-zero level.
         InternalMeta i_meta_from_rec;
-        readInternalMeta(rec.meta, i_meta_from_rec);
+        readInternalMeta(rec.meta, i_meta_from_rec, myLog);
         if (i_meta_from_rec.isTombstone || force_delete) {
             _log_err(myLog, "deletion is executed"
                      ", value size: %zu, seqnum: %" PRIu64
                      ", isTombstone: %d, force_delete: %d"
-                     ", is compressed: %d, original value size: %zu",
+                     ", is compressed: %d, original value size: %zu"
                      ", key: %s, meta :%s",
                      rec.kv.value.size, rec.seqNum,
                      i_meta_from_rec.isTombstone, force_delete,
