@@ -159,6 +159,8 @@ public:
 
     Status init(const TableMgrOptions& _options);
 
+    Status adjustNumL0Partitions();
+
     Status removeStaleFiles();
 
     Status shutdown();
@@ -236,8 +238,7 @@ public:
 
     Status compactLevelItr(const CompactOptions& options,
                            TableInfo* victim_table,
-                           size_t level,
-                           bool adjust_num_l0 = false);
+                           size_t level);
 
     Status migrateLevel(const CompactOptions& options,
                         size_t level);
@@ -301,8 +302,7 @@ public:
                             TableFile* dst_file,
                             std::vector<uint64_t>& offsets,
                             uint64_t start_index,
-                            uint64_t count,
-                            bool adjusting_num_l0 = false);
+                            uint64_t count);
 
     void setTableFileItrFlush(TableFile* dst_file,
                               std::list<Record*>& recs_batch,
