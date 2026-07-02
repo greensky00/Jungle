@@ -378,6 +378,144 @@ void check_args(int argc, char** argv) {
     }
 }
 
+#include <libforestdb/forestdb.h>
+
+int asdfasdf() {
+    fdb_status fs;
+    std::string src = "./src";
+    std::string tgt = "./tgt";
+
+    fdb_config f_conf = fdb_get_default_config();
+    f_conf.wal_flush_before_commit = true;
+    f_conf.bulk_load_mode = true;
+    f_conf.seqtree_opt = FDB_SEQTREE_USE;
+
+    fdb_kvs_config k_conf = fdb_get_default_kvs_config();
+
+    fdb_file_handle* src_fh = nullptr;
+    fs = fdb_open(&src_fh, src.c_str(), &f_conf);
+    CHK_Z(fs);
+
+    fdb_kvs_handle* src_kvs = nullptr;
+    fs = fdb_kvs_open(src_fh, &src_kvs, nullptr, &k_conf);
+    CHK_Z(fs);
+
+    fdb_file_handle* tgt_fh = nullptr;
+    fs = fdb_open(&tgt_fh, tgt.c_str(), &f_conf);
+    CHK_Z(fs);
+
+    fdb_kvs_handle* tgt_kvs = nullptr;
+    fs = fdb_kvs_open(tgt_fh, &tgt_kvs, nullptr, &k_conf);
+    CHK_Z(fs);
+
+    fdb_iterator* it = nullptr;
+    fs = fdb_iterator_init(src_kvs, &it, nullptr, 0, nullptr, 0, FDB_ITR_NONE);
+    CHK_Z(fs);
+    do {
+        fdb_doc *fdoc = nullptr;
+        fs = fdb_iterator_get(it, &fdoc);
+        if (fs != FDB_RESULT_SUCCESS) {
+            break;
+        }
+
+        // write to target
+        fs = fdb_set(tgt_kvs, fdoc);
+        CHK_Z(fs);
+
+        fdb_doc_free(fdoc);
+        fdoc = nullptr;
+    } while (fdb_iterator_next(it) == FDB_RESULT_SUCCESS);
+    fs = fdb_iterator_close(it);
+    CHK_Z(fs);
+
+    fs = fdb_commit(tgt_fh, FDB_COMMIT_MANUAL_WAL_FLUSH);
+    CHK_Z(fs);
+
+    fs = fdb_kvs_close(src_kvs);
+    fs = fdb_kvs_close(tgt_kvs);
+    fs = fdb_close(src_fh);
+    fs = fdb_close(tgt_fh);
+
+    return 0;
+}
+
+int asdfasdf2() {
+    fdb_status fs;
+    std::string src = "./src2";
+    std::string tgt = "./tgt";
+
+    fdb_config f_conf = fdb_get_default_config();
+    f_conf.wal_flush_before_commit = true;
+    f_conf.bulk_load_mode = true;
+    f_conf.seqtree_opt = FDB_SEQTREE_USE;
+
+    std::map<uint64_t, std::string> seq_map;
+
+    fdb_kvs_config k_conf = fdb_get_default_kvs_config();
+
+    fdb_file_handle* src_fh = nullptr;
+    fs = fdb_open(&src_fh, src.c_str(), &f_conf);
+    CHK_Z(fs);
+
+    fdb_kvs_handle* src_kvs = nullptr;
+    fs = fdb_kvs_open(src_fh, &src_kvs, nullptr, &k_conf);
+    CHK_Z(fs);
+
+    fdb_file_handle* tgt_fh = nullptr;
+    fs = fdb_open(&tgt_fh, tgt.c_str(), &f_conf);
+    CHK_Z(fs);
+
+    fdb_kvs_handle* tgt_kvs = nullptr;
+    fs = fdb_kvs_open(tgt_fh, &tgt_kvs, nullptr, &k_conf);
+    CHK_Z(fs);
+
+    TestSuite::Msg mm;
+
+    fdb_iterator* it = nullptr;
+    fs = fdb_iterator_init(src_kvs, &it, nullptr, 0, nullptr, 0, FDB_ITR_NONE);
+    CHK_Z(fs);
+    do {
+        fdb_doc *fdoc = nullptr;
+        fs = fdb_iterator_get(it, &fdoc);
+        if (fs != FDB_RESULT_SUCCESS) {
+            break;
+        }
+
+        if (seq_map.find(fdoc->seqnum) != seq_map.end()) {
+            // duplicate sequence number found
+            mm << "duplicate " << fdoc->seqnum << std::endl
+               << " key (new): " << jungle::HexDump::toString(fdoc->key, fdoc->keylen)
+               << " key (old): " << jungle::HexDump::toString(seq_map[fdoc->seqnum])
+               << std::endl;
+            fdoc->seqnum *= 10;
+        } else {
+            seq_map.insert({fdoc->seqnum,
+                            std::string((char*)fdoc->key, fdoc->keylen)});
+        }
+
+        // write to target
+        fs = fdb_set(tgt_kvs, fdoc);
+        CHK_Z(fs);
+
+
+        fdb_doc_free(fdoc);
+        fdoc = nullptr;
+    } while (fdb_iterator_next(it) == FDB_RESULT_SUCCESS);
+    fs = fdb_iterator_close(it);
+    CHK_Z(fs);
+
+    fs = fdb_commit(tgt_fh, FDB_COMMIT_MANUAL_WAL_FLUSH);
+    CHK_Z(fs);
+
+    fs = fdb_kvs_close(src_kvs);
+    fs = fdb_kvs_close(tgt_kvs);
+    fs = fdb_close(src_fh);
+    fs = fdb_close(tgt_fh);
+
+    return 0;
+}
+
+
 }
 using namespace compactor_stress_test;
 
@@ -386,6 +524,9 @@ int main(int argc, char** argv) {
     check_args(argc, argv);
 
     ts.options.printTestMessage = true;
+
+    ts.doTest("asdfasdf", asdfasdf2); return 0;
+
     ts.doTest( "compactor stress test",
                cpt_stress_test,
                TestRange<size_t>({10}) );

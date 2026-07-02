@@ -58,6 +58,7 @@ static int load_db(const std::string& db_path,
     DBConfig d_conf;
     d_conf.readOnly = true;
     d_conf.logSectionOnly = log_mode_out;
+    d_conf.numL0Partitions = 1;
     if (log_mode_out) {
         d_conf.logFileTtl_sec = 3;
     }

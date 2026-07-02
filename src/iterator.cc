@@ -123,13 +123,27 @@ Status Iterator::initSN(DB* db,
                                  p->db->p->logMgr,
                                  min_seq,
                                  max_seq );
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
     if (s) s = ctx_log->logItr->get(ctx_log->lastRec);
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
+
     if (s) {
         avl_node* ret =
             avl_insert(&p->curWindow, &ctx_log->an, ItrInt::ItrItem::cmpSeq);
         assert(ret == &ctx_log->an);
         (void)ret;
     }
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
+
     p->itrs.push_back(ctx_log);
 
     // TableMgr iterator
@@ -139,7 +153,21 @@ Status Iterator::initSN(DB* db,
                                      p->db->p->tableMgr,
                                      min_seq,
                                      max_seq );
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
+
     if (s) s = ctx_table->tableItr->get(ctx_table->lastRec);
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
+    if (!s.ok()) {
+        _log_err(db->p->myLog, "Failed to initialize log iterator for sequence number iteration: %s",
+                 s.toString().c_str());
+    }
+
     if (s) {
         avl_node* ret =
             avl_insert(&p->curWindow, &ctx_table->an, ItrInt::ItrItem::cmpSeq);
