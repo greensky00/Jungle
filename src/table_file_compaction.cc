@@ -68,7 +68,7 @@ bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* d
     if (doc->deleted) i_meta.isTombstone = true;
 
     // If custom tombstone function exists, call and check it.
-    if (db_config->compactionCbFunc) {
+    if (db_config->compactionCbFunc || db_config->mutableCompactionCbFunc) {
         CompactionCbParams params;
         params.rec.kv.key = SizedBuf(doc->keylen, doc->key);
         params.rec.kv.value = SizedBuf(doc->bodylen, doc->body);
@@ -78,9 +78,39 @@ bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* d
         params.minKey = min_key;
         params.maxKey = max_key;
 
-        CompactionCbDecision dec = db_config->compactionCbFunc(params);
-        if (dec == CompactionCbDecision::DROP) {
-            i_meta.isTombstone = true;
+        if (db_config->mutableCompactionCbFunc) {
+            SizedBuf new_meta_out, new_value_out;
+            SizedBuf::Holder h_new_meta_out(new_meta_out);
+            SizedBuf::Holder h_new_value_out(new_value_out);
+
+            CompactionCbDecision dec =
+                db_config->mutableCompactionCbFunc(params, new_meta_out, new_value_out);
+            if (dec == CompactionCbDecision::DROP) {
+                i_meta.isTombstone = true;
+            } else {
+                if (!new_meta_out.empty()) {
+                    // Replace meta after encoding.
+                    SizedBuf new_raw_meta;
+                    userMetaToRawMeta(new_meta_out, i_meta, new_raw_meta);
+
+                    free(doc->meta);
+                    doc->meta = new_raw_meta.data;
+                    doc->metalen = new_raw_meta.size;
+                }
+                if (!new_value_out.empty()) {
+                    // Replace value as-is.
+                    free(doc->body);
+                    doc->body = new_value_out.data;
+                    doc->bodylen = new_value_out.size;
+                    new_value_out.clear();
+                }
+            }
+
+        } else if (db_config->compactionCbFunc) {
+            CompactionCbDecision dec = db_config->compactionCbFunc(params);
+            if (dec == CompactionCbDecision::DROP) {
+                i_meta.isTombstone = true;
+            }
         }
     }
     return i_meta.isTombstone;

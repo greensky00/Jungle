@@ -69,6 +69,11 @@ struct CompactionCbParams {
 using CompactionCbFunc =
     std::function< CompactionCbDecision(const CompactionCbParams&) >;
 
+using MutableCompactionCbFunc =
+    std::function< CompactionCbDecision(const CompactionCbParams&,
+                                        SizedBuf&,
+                                        SizedBuf&) >;
+
 
 enum SearchCbDecision : int {
     /**
@@ -128,6 +133,7 @@ public:
         , cmpFunc(nullptr)
         , cmpFuncParam(nullptr)
         , compactionCbFunc(nullptr)
+        , mutableCompactionCbFunc(nullptr)
         , allowLogging(true)
         , throttlingThreshold(10000)
         , throttlingNumLogFilesSoft(16)
@@ -266,6 +272,12 @@ public:
      * Compaction callback function.
      */
     CompactionCbFunc compactionCbFunc;
+
+    /**
+     * Mutable compaction callback function.
+     * If given, `compactionCbFunc` will be ignored.
+     */
+    MutableCompactionCbFunc mutableCompactionCbFunc;
 
     /**
      * Allow logging system info.

@@ -464,6 +464,161 @@ int callback_l1_test() {
     return 0;
 }
 
+int mutable_callback_l1_test() {
+    std::string filename;
+    TEST_SUITE_PREPARE_PATH(filename);
+
+    jungle::GlobalConfig g_config;
+    g_config.compactorSleepDuration_ms = 100;
+    g_config.numCompactorThreads = 1;
+    jungle::init(g_config);
+
+    jungle::Status s;
+    jungle::DB* db;
+
+    // Open DB with compaction callback function.
+    jungle::DBConfig config;
+    TEST_CUSTOM_DB_CONFIG(config)
+
+    // This callback function will drop all odd number KVs.
+    bool callback_invoked = false;
+    bool min_max_key_check = true;
+    auto cb_func = [&](const jungle::CompactionCbParams& params,
+                       jungle::SizedBuf& new_meta_out,
+                       jungle::SizedBuf& new_value_out) {
+        if (params.maxKey.empty() || params.minKey.empty()) {
+            min_max_key_check = false;
+        }
+
+        // Drops all odd number KVs.
+        callback_invoked = true;
+        std::string num_str = std::string((char*)params.rec.kv.key.data + 1,
+                                          params.rec.kv.key.size - 1);
+        size_t num = atoi(num_str.c_str());
+        if (num % 2 == 1) {
+            return jungle::CompactionCbDecision::DROP;
+        }
+        // If even number, multiply it by 10.
+        num *= 10;
+        std::string new_value_str = "v" + TestSuite::lzStr(6, num);
+        jungle::SizedBuf(new_value_str).copyTo(new_value_out);
+
+        // And also set metadata.
+        std::string new_meta_str = "m" + TestSuite::lzStr(6, num);
+        jungle::SizedBuf(new_meta_str).copyTo(new_meta_out);
+        return jungle::CompactionCbDecision::KEEP;
+    };
+
+    config.mutableCompactionCbFunc = cb_func;
+    config.numL0Partitions = 4;
+    config.compactionFactor = 150;
+    config.nextLevelExtension = true;
+    CHK_Z(jungle::DB::open(&db, filename, config));
+
+    size_t num = 1000;
+    jungle::CompactOptions c_opt;
+
+    CHK_Z(_set_keys(db, 0, num, 1, "k%06zu", "v%06zu"));
+
+    // Sync & flush.
+    CHK_Z(db->sync(false));
+    CHK_Z(db->flushLogs(jungle::FlushOptions()));
+
+    // Do L0 compaction.
+    for (size_t ii = 0; ii < config.numL0Partitions; ++ii) {
+        CHK_Z(db->compactL0(c_opt, ii));
+    }
+
+    // Callback shouldn't be invoked for L0 compaction if `nextLevelExtension` is true.
+    CHK_FALSE(callback_invoked);
+
+    // Do full compaction.
+    jungle::DBStats db_stats;
+    CHK_Z(db->getStats(db_stats));
+    uint64_t cur_max_table_idx = db_stats.maxTableIndex;
+
+    CHK_Z(db->compactIdxUpto(c_opt, cur_max_table_idx));
+
+    // Wait until min table index becomes greater than the current max index.
+    size_t tick = 0;
+    const size_t MAX_TICK = 10;
+    do {
+        jungle::DBStats db_stats;
+        CHK_Z(db->getStats(db_stats));
+        if (db_stats.minTableIndex > cur_max_table_idx) {
+            break;
+        }
+        std::stringstream ss;
+        ss << "min table index: " << db_stats.minTableIndex
+           << ", max table index: " << cur_max_table_idx
+           << ", tick: " << tick;
+        TestSuite::sleep_ms(500, ss.str());
+        tick++;
+    } while (tick < MAX_TICK);
+    CHK_SM(tick, MAX_TICK);
+
+    // Min max keys should have been given.
+    CHK_TRUE(min_max_key_check);
+
+    for (size_t ii=0; ii<num; ++ii) {
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", ii);
+        jungle::SizedBuf key(key_str);
+        if (ii % 2 == 0) {
+            jungle::Record rec_out;
+            jungle::Record::Holder h_rec(rec_out);
+            CHK_Z( db->getRecordByKey(key, rec_out) );
+            sprintf(meta_str, "m%06zu", ii * 10);
+            sprintf(value_str, "v%06zu", ii * 10);
+            jungle::SizedBuf meta(meta_str);
+            jungle::SizedBuf value(value_str);
+            CHK_EQ(meta, rec_out.meta);
+            CHK_EQ(value, rec_out.kv.value);
+        } else {
+            jungle::SizedBuf val;
+            jungle::SizedBuf::Holder h_val(val);
+            CHK_NOT( db->get(key, val) );
+        }
+    }
+
+    jungle::Iterator itr;
+    CHK_Z( itr.init(db) );
+    size_t idx = 0;
+    do {
+        jungle::Record rec;
+        jungle::Record::Holder h_rec(rec);
+        s = itr.get(rec);
+        if (!s) break;
+
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", idx);
+        sprintf(meta_str, "m%06zu", idx * 10);
+        sprintf(value_str, "v%06zu", idx * 10);
+
+        jungle::SizedBuf key(key_str);
+        jungle::SizedBuf meta(meta_str);
+        jungle::SizedBuf value(value_str);
+
+        CHK_EQ(key, rec.kv.key);
+        CHK_EQ(meta, rec.meta);
+        CHK_EQ(value, rec.kv.value);
+        idx += 2;
+
+    } while (itr.next().ok());
+    CHK_Z( itr.close() );
+
+    CHK_Z(jungle::DB::close(db));
+    CHK_Z(jungle::shutdown());
+
+    TEST_SUITE_CLEANUP_PATH();
+    return 0;
+}
+
+
 int tombstone_compaction_test() {
     std::string filename;
     TEST_SUITE_PREPARE_PATH(filename);
@@ -1199,6 +1354,9 @@ int main(int argc, char** argv) {
 
     ts.doTest("callback L1 test",
               callback_l1_test);
+
+    ts.doTest("mutable callback L1 test",
+              mutable_callback_l1_test);
 
     ts.doTest("tombstone compaction test",
               tombstone_compaction_test);
