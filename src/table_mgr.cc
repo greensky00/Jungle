@@ -110,9 +110,13 @@ void TableMgr::logTableSettings(const DBConfig* db_config) {
         _log_info(myLog, "direct-IO with readahead %zu bytes",
                   db_config->directIoOpt.readaheadSize);
     }
-    if (db_config->compactionCbFunc) {
+    if (db_config->mutableCompactionCbFunc) {
+        _log_info(myLog, "mutable compaction callback function is given by user");
+    } else if (db_config->compactionCbFunc) {
         _log_info(myLog, "compaction callback function is given by user");
     }
+    _log_info( myLog, "compaction callback decompress value: %s",
+               get_on_off_str(db_config->compactionCbDecompressValue) );
     _log_info( myLog, "table lookup booster limit %zu %zu",
                getBoosterLimit(0), getBoosterLimit(1) );
     _log_info( myLog, "next level extension %s",
