@@ -27,6 +27,8 @@ limitations under the License.
 
 namespace jungle {
 
+class DB;
+
 /**
  * Used `typedef` to make it compatible with ForestDB's function type.
  */
@@ -48,7 +50,11 @@ enum CompactionCbDecision : int {
 };
 
 struct CompactionCbParams {
-    CompactionCbParams() {}
+    CompactionCbParams() : db(nullptr), originalValueLen(0) {}
+    /**
+     * DB instance.
+     */
+    DB* db;
 
     /**
      * Record to be compacted.
@@ -64,6 +70,12 @@ struct CompactionCbParams {
      * The biggest key in the table that is being compacted.
      */
     SizedBuf maxKey;
+
+    /**
+     * If the record is compressed, this field contains the original value length.
+     * If the record is not compressed, this field is 0.
+     */
+    uint32_t originalValueLen;
 };
 
 using CompactionCbFunc =
@@ -276,18 +288,26 @@ public:
 
     /**
      * Mutable compaction callback function.
-     * If given, `compactionCbFunc` will be ignored.
+     * If given, this callback takes precedence over `compactionCbFunc`.
+     *
+     * When compression is enabled, the input value may be provided either compressed
+     * or decompressed, depending on the compactionCbDecompressValue option.
+     * The output value must always be returned in its original, uncompressed form
+     * so that Jungle can update its internal metadata correctly.
      */
     MutableCompactionCbFunc mutableCompactionCbFunc;
 
     /**
-     * If `true`, value will be decompressed before calling compaction callback function.
-     * If `false`, value will be passed to compaction callback function as-is.
+     * When compression is enabled, setting this option to `true` causes
+     * the input value passed to the callback to be decompressed.
      *
-     * Need to enable it only when the callback function needs to access the value.
+     * If set to `false`, the input value is passed as-is.
      *
-     * Another options is to set it to `false` and directly decompress the value
-     * in the callback function if needed.
+     * Since decompression adds overhead to compaction, enable this option
+     * only when the benefit justifies the additional cost.
+     *
+     * Alternatively, leave this option set to `false` and
+     * have the callback perform decompression itself.
      */
     bool compactionCbDecompressValue;
 

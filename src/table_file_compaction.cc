@@ -74,10 +74,12 @@ bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* d
     }
 
     CompactionCbParams params;
+    params.db = parent_db;
     params.rec.kv.key = SizedBuf(doc->keylen, doc->key);
     params.rec.kv.value = SizedBuf(doc->bodylen, doc->body);
     params.rec.meta = SizedBuf(user_meta_out.size, user_meta_out.data);
     params.rec.seqNum = doc->seqnum;
+    params.originalValueLen = i_meta.originalValueLen;
 
     SizedBuf decomp_value;
     SizedBuf::Holder h_decomp_value(decomp_value); // auto free.
@@ -134,11 +136,14 @@ bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* d
                     size_t max_comp_size =
                         db_config->compOpt.cbGetMaxSize(parent_db, tmp_rec);
                     SizedBuf comp_buf(max_comp_size);
+                    SizedBuf::Holder h_comp_buf(comp_buf); // auto free.
                     size_t comp_size =
                         db_config->compOpt.cbCompress(parent_db, tmp_rec, comp_buf);
                     if (comp_size) {
                         doc->body = comp_buf.data;
                         doc->bodylen = comp_size;
+                        comp_buf.clear();
+
                         i_meta.originalValueLen = new_value_out.size;
                         meta_updated = true;
                         compressed = true;
