@@ -134,6 +134,7 @@ public:
         , cmpFuncParam(nullptr)
         , compactionCbFunc(nullptr)
         , mutableCompactionCbFunc(nullptr)
+        , compactionCbDecompressValue(false)
         , allowLogging(true)
         , throttlingThreshold(10000)
         , throttlingNumLogFilesSoft(16)
@@ -278,6 +279,17 @@ public:
      * If given, `compactionCbFunc` will be ignored.
      */
     MutableCompactionCbFunc mutableCompactionCbFunc;
+
+    /**
+     * If `true`, value will be decompressed before calling compaction callback function.
+     * If `false`, value will be passed to compaction callback function as-is.
+     *
+     * Need to enable it only when the callback function needs to access the value.
+     *
+     * Another options is to set it to `false` and directly decompress the value
+     * in the callback function if needed.
+     */
+    bool compactionCbDecompressValue;
 
     /**
      * Allow logging system info.

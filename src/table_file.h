@@ -387,7 +387,8 @@ private:
     Status decompressValue(DB* parent_db,
                            const DBConfig* db_config,
                            Record& rec_io,
-                           const InternalMeta& i_meta);
+                           const InternalMeta& i_meta,
+                           bool free_prev_value = true);
 
     void initBooster(size_t level, const DBConfig* db_config);
 

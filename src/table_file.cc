@@ -1492,7 +1492,8 @@ Status TableFile::traverseIndex(DB* snap_handle,
 Status TableFile::decompressValue(DB* parent_db,
                                   const DBConfig* db_config,
                                   Record& rec_io,
-                                  const InternalMeta& i_meta)
+                                  const InternalMeta& i_meta,
+                                  bool free_prev_value)
 {
     if (!i_meta.isCompressed) return Status::OK;
 
@@ -1521,7 +1522,9 @@ Status TableFile::decompressValue(DB* parent_db,
     // Switch value and free the previous (compressed) one.
     SizedBuf prev_buf = rec_io.kv.value;
     rec_io.kv.value = decomp_buf;
-    prev_buf.free();
+    if (free_prev_value) {
+        prev_buf.free();
+    }
     return Status::OK;
 }
 

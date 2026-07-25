@@ -498,9 +498,9 @@ int mutable_callback_l1_test() {
         if (num % 2 == 1) {
             return jungle::CompactionCbDecision::DROP;
         }
-        // If even number, multiply it by 10.
+        // If even number, multiply it by 10, with different length.
         num *= 10;
-        std::string new_value_str = "v" + TestSuite::lzStr(6, num);
+        std::string new_value_str = "v" + TestSuite::lzStr(8, num);
         jungle::SizedBuf(new_value_str).copyTo(new_value_out);
 
         // And also set metadata.
@@ -571,7 +571,7 @@ int mutable_callback_l1_test() {
             jungle::Record::Holder h_rec(rec_out);
             CHK_Z( db->getRecordByKey(key, rec_out) );
             sprintf(meta_str, "m%06zu", ii * 10);
-            sprintf(value_str, "v%06zu", ii * 10);
+            sprintf(value_str, "v%08zu", ii * 10);
             jungle::SizedBuf meta(meta_str);
             jungle::SizedBuf value(value_str);
             CHK_EQ(meta, rec_out.meta);
@@ -597,7 +597,7 @@ int mutable_callback_l1_test() {
         char value_str[256];
         sprintf(key_str, "k%06zu", idx);
         sprintf(meta_str, "m%06zu", idx * 10);
-        sprintf(value_str, "v%06zu", idx * 10);
+        sprintf(value_str, "v%08zu", idx * 10);
 
         jungle::SizedBuf key(key_str);
         jungle::SizedBuf meta(meta_str);
