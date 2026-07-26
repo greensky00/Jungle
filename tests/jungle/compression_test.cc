@@ -489,6 +489,301 @@ int compression_log_store_test() {
     return 0;
 }
 
+int compression_mutable_cb_test(bool with_meta) {
+    std::string filename;
+    TEST_SUITE_PREPARE_PATH(filename);
+
+    jungle::GlobalConfig g_config;
+    g_config.compactorSleepDuration_ms = 100;
+    g_config.numCompactorThreads = 1;
+    jungle::init(g_config);
+
+    jungle::Status s;
+    jungle::DBConfig config;
+    TEST_CUSTOM_DB_CONFIG(config);
+    config.compOpt.cbGetMaxSize = dummy_get_max_size;
+    config.compOpt.cbCompress = dummy_compress;
+    config.compOpt.cbDecompress = dummy_decompress;
+    config.compactionCbDecompressValue = true;
+    auto cb_func = [&](const jungle::CompactionCbParams& params,
+                       jungle::SizedBuf& new_meta_out,
+                       jungle::SizedBuf& new_value_out) {
+        // Drops all odd number KVs.
+        std::string num_str = std::string((char*)params.rec.kv.key.data + 1,
+                                          params.rec.kv.key.size - 1);
+        size_t num = atoi(num_str.c_str());
+        if (num % 2 == 1) {
+            return jungle::CompactionCbDecision::DROP;
+        }
+        // If even number, multiply it by 10, with different length.
+        num *= 10;
+        std::string new_value_str = "v" + TestSuite::lzStr(8, num);
+        jungle::SizedBuf(new_value_str).copyTo(new_value_out);
+
+        if (with_meta) {
+            // And also set metadata.
+            std::string new_meta_str = "m" + TestSuite::lzStr(6, num);
+            jungle::SizedBuf(new_meta_str).copyTo(new_meta_out);
+        }
+        return jungle::CompactionCbDecision::KEEP;
+    };
+    config.mutableCompactionCbFunc = cb_func;
+
+    jungle::DB* db;
+    CHK_Z( jungle::DB::open(&db, filename, config) );
+
+    for (size_t ii=0; ii<NUM_RECORDS; ++ii) {
+        std::string key_str = "k" + TestSuite::lzStr(6, ii);
+        std::string val_str = "v" + TestSuite::lzStr(6, ii);
+        CHK_Z( db->set( jungle::KV(key_str, val_str) ) );
+    }
+    CHK_Z( db->sync(false) );
+    CHK_Z( db->flushLogs() );
+
+    // Do L0 compaction.
+    for (size_t ii = 0; ii < config.numL0Partitions; ++ii) {
+        CHK_Z(db->compactL0(jungle::CompactOptions(), ii));
+    }
+
+    // Do full compaction.
+    jungle::DBStats db_stats;
+    CHK_Z(db->getStats(db_stats));
+    uint64_t cur_max_table_idx = db_stats.maxTableIndex;
+
+    CHK_Z(db->compactIdxUpto(jungle::CompactOptions(), cur_max_table_idx));
+
+    // Wait until min table index becomes greater than the current max index.
+    size_t tick = 0;
+    const size_t MAX_TICK = 10;
+    do {
+        jungle::DBStats db_stats;
+        CHK_Z(db->getStats(db_stats));
+        if (db_stats.minTableIndex > cur_max_table_idx) {
+            break;
+        }
+        std::stringstream ss;
+        ss << "min table index: " << db_stats.minTableIndex
+           << ", max table index: " << cur_max_table_idx
+           << ", tick: " << tick;
+        TestSuite::sleep_ms(500, ss.str());
+        tick++;
+    } while (tick < MAX_TICK);
+    CHK_SM(tick, MAX_TICK);
+
+    for (size_t ii=0; ii<NUM_RECORDS; ++ii) {
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", ii);
+        jungle::SizedBuf key(key_str);
+        if (ii % 2 == 0) {
+            jungle::Record rec_out;
+            jungle::Record::Holder h_rec(rec_out);
+            CHK_Z( db->getRecordByKey(key, rec_out) );
+            sprintf(meta_str, "m%06zu", ii * 10);
+            sprintf(value_str, "v%08zu", ii * 10);
+            jungle::SizedBuf meta(meta_str);
+            jungle::SizedBuf value(value_str);
+            if (with_meta) {
+                CHK_EQ(meta, rec_out.meta);
+            }
+            CHK_EQ(value, rec_out.kv.value);
+        } else {
+            jungle::SizedBuf val;
+            jungle::SizedBuf::Holder h_val(val);
+            CHK_NOT( db->get(key, val) );
+        }
+    }
+
+    jungle::Iterator itr;
+    CHK_Z( itr.init(db) );
+    size_t idx = 0;
+    do {
+        jungle::Record rec;
+        jungle::Record::Holder h_rec(rec);
+        s = itr.get(rec);
+        if (!s) break;
+
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", idx);
+        sprintf(meta_str, "m%06zu", idx * 10);
+        sprintf(value_str, "v%08zu", idx * 10);
+
+        jungle::SizedBuf key(key_str);
+        jungle::SizedBuf meta(meta_str);
+        jungle::SizedBuf value(value_str);
+
+        CHK_EQ(key, rec.kv.key);
+        if (with_meta) {
+            CHK_EQ(meta, rec.meta);
+        }
+        CHK_EQ(value, rec.kv.value);
+        idx += 2;
+
+    } while (itr.next().ok());
+    CHK_Z( itr.close() );
+
+    CHK_Z( jungle::DB::close(db) );
+    CHK_Z( jungle::shutdown() );
+
+    TEST_SUITE_CLEANUP_PATH();
+    return 0;
+}
+
+int compression_mutable_cb_wo_decompress_test(bool with_meta) {
+    std::string filename;
+    TEST_SUITE_PREPARE_PATH(filename);
+
+    jungle::GlobalConfig g_config;
+    g_config.compactorSleepDuration_ms = 100;
+    g_config.numCompactorThreads = 1;
+    jungle::init(g_config);
+
+    jungle::Status s;
+    jungle::DBConfig config;
+    TEST_CUSTOM_DB_CONFIG(config);
+    config.compOpt.cbGetMaxSize = dummy_get_max_size;
+    config.compOpt.cbCompress = dummy_compress;
+    config.compOpt.cbDecompress = dummy_decompress;
+    config.compactionCbDecompressValue = false;
+    auto cb_func = [&](const jungle::CompactionCbParams& params,
+                       jungle::SizedBuf& new_meta_out,
+                       jungle::SizedBuf& new_value_out) {
+        // Drops all odd number KVs.
+
+        // `compactionCbDecompressValue` is off,
+        // callback should decompress it on its own.
+        jungle::SizedBuf tmp_buf;
+        jungle::SizedBuf::Holder h_tmp_buf(tmp_buf);
+        tmp_buf.alloc(params.originalValueLen);
+        dummy_decompress(params.db, params.rec.kv.value, tmp_buf);
+
+        std::string num_str = std::string((char*)tmp_buf.data + 1,
+                                          tmp_buf.size - 1);
+        size_t num = atoi(num_str.c_str());
+        if (num % 2 == 1) {
+            return jungle::CompactionCbDecision::DROP;
+        }
+        // If even number, multiply it by 10, with different length.
+        num *= 10;
+        std::string new_value_str = "v" + TestSuite::lzStr(8, num);
+        jungle::SizedBuf(new_value_str).copyTo(new_value_out);
+
+        if (with_meta) {
+            // And also set metadata.
+            std::string new_meta_str = "m" + TestSuite::lzStr(6, num);
+            jungle::SizedBuf(new_meta_str).copyTo(new_meta_out);
+        }
+        return jungle::CompactionCbDecision::KEEP;
+    };
+    config.mutableCompactionCbFunc = cb_func;
+
+    jungle::DB* db;
+    CHK_Z( jungle::DB::open(&db, filename, config) );
+
+    for (size_t ii=0; ii<NUM_RECORDS; ++ii) {
+        std::string key_str = "k" + TestSuite::lzStr(6, ii);
+        std::string val_str = "v" + TestSuite::lzStr(6, ii);
+        CHK_Z( db->set( jungle::KV(key_str, val_str) ) );
+    }
+    CHK_Z( db->sync(false) );
+    CHK_Z( db->flushLogs() );
+
+    // Do L0 compaction.
+    for (size_t ii = 0; ii < config.numL0Partitions; ++ii) {
+        CHK_Z(db->compactL0(jungle::CompactOptions(), ii));
+    }
+
+    // Do full compaction.
+    jungle::DBStats db_stats;
+    CHK_Z(db->getStats(db_stats));
+    uint64_t cur_max_table_idx = db_stats.maxTableIndex;
+
+    CHK_Z(db->compactIdxUpto(jungle::CompactOptions(), cur_max_table_idx));
+
+    // Wait until min table index becomes greater than the current max index.
+    size_t tick = 0;
+    const size_t MAX_TICK = 10;
+    do {
+        jungle::DBStats db_stats;
+        CHK_Z(db->getStats(db_stats));
+        if (db_stats.minTableIndex > cur_max_table_idx) {
+            break;
+        }
+        std::stringstream ss;
+        ss << "min table index: " << db_stats.minTableIndex
+           << ", max table index: " << cur_max_table_idx
+           << ", tick: " << tick;
+        TestSuite::sleep_ms(500, ss.str());
+        tick++;
+    } while (tick < MAX_TICK);
+    CHK_SM(tick, MAX_TICK);
+
+    for (size_t ii=0; ii<NUM_RECORDS; ++ii) {
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", ii);
+        jungle::SizedBuf key(key_str);
+        if (ii % 2 == 0) {
+            jungle::Record rec_out;
+            jungle::Record::Holder h_rec(rec_out);
+            CHK_Z( db->getRecordByKey(key, rec_out) );
+            sprintf(meta_str, "m%06zu", ii * 10);
+            sprintf(value_str, "v%08zu", ii * 10);
+            jungle::SizedBuf meta(meta_str);
+            jungle::SizedBuf value(value_str);
+            if (with_meta) {
+                CHK_EQ(meta, rec_out.meta);
+            }
+            CHK_EQ(value, rec_out.kv.value);
+        } else {
+            jungle::SizedBuf val;
+            jungle::SizedBuf::Holder h_val(val);
+            CHK_NOT( db->get(key, val) );
+        }
+    }
+
+    jungle::Iterator itr;
+    CHK_Z( itr.init(db) );
+    size_t idx = 0;
+    do {
+        jungle::Record rec;
+        jungle::Record::Holder h_rec(rec);
+        s = itr.get(rec);
+        if (!s) break;
+
+        char key_str[256];
+        char meta_str[256];
+        char value_str[256];
+        sprintf(key_str, "k%06zu", idx);
+        sprintf(meta_str, "m%06zu", idx * 10);
+        sprintf(value_str, "v%08zu", idx * 10);
+
+        jungle::SizedBuf key(key_str);
+        jungle::SizedBuf meta(meta_str);
+        jungle::SizedBuf value(value_str);
+
+        CHK_EQ(key, rec.kv.key);
+        if (with_meta) {
+            CHK_EQ(meta, rec.meta);
+        }
+        CHK_EQ(value, rec.kv.value);
+        idx += 2;
+
+    } while (itr.next().ok());
+    CHK_Z( itr.close() );
+
+    CHK_Z( jungle::DB::close(db) );
+    CHK_Z( jungle::shutdown() );
+
+    TEST_SUITE_CLEANUP_PATH();
+    return 0;
+}
+
+
 int main(int argc, char** argv) {
     TestSuite ts(argc, argv);
 
@@ -534,6 +829,14 @@ int main(int argc, char** argv) {
 
     ts.doTest( "compression log store test",
                compression_log_store_test );
+
+    ts.doTest( "compression mutable cb test",
+               compression_mutable_cb_test,
+               TestRange<bool>( {false, true} ) );
+
+    ts.doTest( "compression mutable cb wo decompress test",
+               compression_mutable_cb_wo_decompress_test,
+               TestRange<bool>( {false, true} ) );
 
     return 0;
 }

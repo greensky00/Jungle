@@ -55,6 +55,7 @@ Status TableFile::compactTo(const std::string& dst_filename,
 bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* doc)
 {
     const DBConfig* db_config = tableMgr->getDbConfig();
+    DB* parent_db = tableMgr->getParentDb();
 
     // Decode meta.
     SizedBuf user_meta_out;
@@ -68,16 +69,116 @@ bool TableFile::isFdbDocTombstone(SizedBuf min_key, SizedBuf max_key, fdb_doc* d
     if (doc->deleted) i_meta.isTombstone = true;
 
     // If custom tombstone function exists, call and check it.
-    if (db_config->compactionCbFunc) {
-        CompactionCbParams params;
-        params.rec.kv.key = SizedBuf(doc->keylen, doc->key);
-        params.rec.kv.value = SizedBuf(doc->bodylen, doc->body);
-        params.rec.meta = SizedBuf(user_meta_out.size, user_meta_out.data);
-        params.rec.seqNum = doc->seqnum;
+    if (!db_config->compactionCbFunc && !db_config->mutableCompactionCbFunc) {
+        return i_meta.isTombstone;
+    }
 
-        params.minKey = min_key;
-        params.maxKey = max_key;
+    CompactionCbParams params;
+    params.db = parent_db;
+    params.rec.kv.key = SizedBuf(doc->keylen, doc->key);
+    params.rec.kv.value = SizedBuf(doc->bodylen, doc->body);
+    params.rec.meta = SizedBuf(user_meta_out.size, user_meta_out.data);
+    params.rec.seqNum = doc->seqnum;
+    params.originalValueLen = i_meta.originalValueLen;
 
+    SizedBuf decomp_value;
+    SizedBuf::Holder h_decomp_value(decomp_value); // auto free.
+    if (db_config->compactionCbDecompressValue && i_meta.isCompressed) {
+        // Decompress value if required.
+        Record decomp_rec;
+        decomp_rec.kv.key = params.rec.kv.key;
+        decomp_rec.kv.value = params.rec.kv.value;
+        decomp_rec.meta = params.rec.meta;
+        decomp_rec.seqNum = params.rec.seqNum;
+
+        Status s = decompressValue(parent_db, db_config, decomp_rec, i_meta,
+                                   /* free_prev_value */ false);
+        if (s.ok()) {
+            params.rec.kv.value = decomp_rec.kv.value;
+            decomp_value = decomp_rec.kv.value; // for auto free purpose.
+        } else {
+            _log_err(myLog, "decompression failed: %d, key %s",
+                     s, decomp_rec.kv.key.toReadableString().c_str());
+        }
+    }
+
+    params.minKey = min_key;
+    params.maxKey = max_key;
+
+    // `mutableCompactionCbFunc` has higher priority than `compactionCbFunc`.
+    if (db_config->mutableCompactionCbFunc) {
+        SizedBuf new_meta_out, new_value_out;
+        SizedBuf::Holder h_new_meta_out(new_meta_out);
+        SizedBuf::Holder h_new_value_out(new_value_out);
+
+        CompactionCbDecision dec =
+            db_config->mutableCompactionCbFunc(params, new_meta_out, new_value_out);
+        if (dec == CompactionCbDecision::DROP) {
+            i_meta.isTombstone = true;
+        } else {
+            bool meta_updated = false;
+            if (!new_value_out.empty()) {
+                // Replace value.
+                free(doc->body);
+                bool compressed = false;
+
+                if (i_meta.isCompressed &&
+                    db_config->compOpt.cbCompress &&
+                    db_config->compOpt.cbGetMaxSize &&
+                    db_config->compOpt.cbDecompress) {
+                    // Compression is enabled.
+                    Record tmp_rec;
+                    tmp_rec.kv.key = params.rec.kv.key;
+                    tmp_rec.kv.value = new_value_out;
+                    tmp_rec.meta = new_meta_out.empty() ? params.rec.meta : new_meta_out;                    ;
+                    tmp_rec.seqNum = params.rec.seqNum;
+
+                    size_t max_comp_size =
+                        db_config->compOpt.cbGetMaxSize(parent_db, tmp_rec);
+                    SizedBuf comp_buf(max_comp_size);
+                    SizedBuf::Holder h_comp_buf(comp_buf); // auto free.
+                    size_t comp_size =
+                        db_config->compOpt.cbCompress(parent_db, tmp_rec, comp_buf);
+                    if (comp_size) {
+                        doc->body = comp_buf.data;
+                        doc->bodylen = comp_size;
+                        comp_buf.clear();
+
+                        i_meta.originalValueLen = new_value_out.size;
+                        meta_updated = true;
+                        compressed = true;
+                    } else {
+                        // Compression failed, so just store the value as-is.
+                    }
+                }
+
+                if (!compressed) {
+                    // If not compressed, just replace the value as-is.
+                    if (i_meta.isCompressed) {
+                        // If previously compressed, remove the flag.
+                        i_meta.isCompressed = false;
+                        i_meta.originalValueLen = 0;
+                        meta_updated = true;
+                    }
+                    doc->body = new_value_out.data;
+                    doc->bodylen = new_value_out.size;
+                    new_value_out.clear();
+                }
+            }
+
+            if (!new_meta_out.empty() || meta_updated) {
+                // Replace meta after encoding.
+                SizedBuf new_raw_meta;
+                userMetaToRawMeta(new_meta_out.empty() ? user_meta_out : new_meta_out,
+                                  i_meta, new_raw_meta);
+
+                free(doc->meta);
+                doc->meta = new_raw_meta.data;
+                doc->metalen = new_raw_meta.size;
+            }
+        }
+
+    } else if (db_config->compactionCbFunc) {
         CompactionCbDecision dec = db_config->compactionCbFunc(params);
         if (dec == CompactionCbDecision::DROP) {
             i_meta.isTombstone = true;
