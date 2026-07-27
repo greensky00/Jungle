@@ -389,7 +389,21 @@ Status TableFile::compactToManually(FdbHandle* compact_handle,
             tmp_doc.offset = cur_offset;
 
             fs = fdb_get_byoffset_raw(compact_handle->db, &tmp_doc);
-            if (fs != FDB_RESULT_SUCCESS) break;
+            if (fs != FDB_RESULT_SUCCESS) {
+                if (fs == FDB_RESULT_KEY_NOT_FOUND ||
+                    fs == FDB_RESULT_ITERATOR_FAIL) {
+                    // Expected normal error codes, finish compaction.
+                    _log_info(myLog, "[COMPACTION] fdb_get_byoffset_raw "
+                              "returned: %d", fs);
+                    break;
+                } else {
+                    // Unexpected error code, abort compaction.
+                    _log_fatal(myLog, "[COMPACTION] fdb_get_byoffset_raw "
+                               "failed: %d", fs);
+                    s = toJungleStatus(fs);
+                    return s;
+                }
+            }
 
             if (!write_to_new_file(&tmp_doc)) {
                 break;
@@ -410,7 +424,20 @@ Status TableFile::compactToManually(FdbHandle* compact_handle,
 
             fdb_doc *ret_doc = &tmp_doc;
             fs = fdb_iterator_get(itr, &ret_doc);
-            if (fs != FDB_RESULT_SUCCESS) break;
+            if (fs != FDB_RESULT_SUCCESS) {
+                if (fs == FDB_RESULT_KEY_NOT_FOUND ||
+                    fs == FDB_RESULT_ITERATOR_FAIL) {
+                    // Expected normal error codes when it is out of range,
+                    // finish compaction.
+                    _log_info(myLog, "[COMPACTION] fdb_iterator_get returned: %d", fs);
+                    break;
+                } else {
+                    // Unexpected error code, abort compaction.
+                    _log_fatal(myLog, "[COMPACTION] fdb_iterator_get failed: %d", fs);
+                    s = toJungleStatus(fs);
+                    return s;
+                }
+            }
 
             if (!write_to_new_file(ret_doc)) {
                 break;
