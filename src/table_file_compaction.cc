@@ -393,7 +393,7 @@ Status TableFile::compactToManually(FdbHandle* compact_handle,
                 if (fs == FDB_RESULT_KEY_NOT_FOUND ||
                     fs == FDB_RESULT_ITERATOR_FAIL) {
                     // Expected normal error codes, finish compaction.
-                    _log_warn(myLog, "[COMPACTION] fdb_get_byoffset_raw "
+                    _log_info(myLog, "[COMPACTION] fdb_get_byoffset_raw "
                               "returned: %d", fs);
                     break;
                 } else {
@@ -429,7 +429,7 @@ Status TableFile::compactToManually(FdbHandle* compact_handle,
                     fs == FDB_RESULT_ITERATOR_FAIL) {
                     // Expected normal error codes when it is out of range,
                     // finish compaction.
-                    _log_warn(myLog, "[COMPACTION] fdb_iterator_get returned: %d", fs);
+                    _log_info(myLog, "[COMPACTION] fdb_iterator_get returned: %d", fs);
                     break;
                 } else {
                     // Unexpected error code, abort compaction.
