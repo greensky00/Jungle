@@ -1538,7 +1538,7 @@ Status MemTable::getLogsToFlush(const uint64_t seq_num,
         Record* cur_rec = *entry;
         if (cur_rec->seqNum >= ii) {
             _log_err(myLog, "found duplicate seq number across different log files: "
-                     "seqnum %zu > %zu. will use newer one",
+                     "seqnum %zu >= %zu. will use newer one",
                      cur_rec->seqNum, ii);
             list_out.pop_back();
             entry = list_out.rbegin();

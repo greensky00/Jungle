@@ -1884,7 +1884,7 @@ int sync_multiple_files_wo_manifest_test() {
     CHK_Z(jungle::DB::close(db));
 
     // Open clone.
-    // Even with crash without manifest sync, all 5 logs should be there.
+    // Even with crash without manifest sync, all 25 logs should be there.
     CHK_Z(jungle::DB::open(&db, clone_path, config));
 
     size_t exp_upto = 25;
