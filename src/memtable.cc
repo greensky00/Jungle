@@ -998,7 +998,7 @@ Status MemTable::load(RwSerializer& rws,
             uint64_t seq = 0;
             EB( loadRecord(rws, flags, seq),  "failed to load record" )
             last_seq = seq;
-            if (seq < min_seq_seen || min_seq_seen == 0) {
+            if (valid_number(seq) && (seq < min_seq_seen || min_seq_seen == 0)) {
                 min_seq_seen = seq;
             }
             num_record++;
